@@ -19,6 +19,7 @@ import websockets
 from prompt_toolkit import Application
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.layout import HSplit, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -43,7 +44,11 @@ class ChatUI:
     def __init__(self, state: ClientState, send_callback) -> None:
         self.state = state
         self.send_callback = send_callback
-        self.output_control = FormattedTextControl(text=[])
+        self.output_control = FormattedTextControl(
+            text=[],
+            show_cursor=False,
+            get_cursor_position=self._get_cursor_position,
+        )
         self.output_window = Window(
             content=self.output_control,
             wrap_lines=True,
@@ -111,6 +116,13 @@ class ChatUI:
         formatted: List[tuple[str, str]] = []
         width = self._get_content_width()
         line_count = 0
+        render_info = self.output_window.render_info
+        if render_info:
+            visible_height = render_info.window_height
+            max_scroll = max(0, self._last_line_count - visible_height)
+            was_at_bottom = self.output_window.vertical_scroll >= max_scroll
+        else:
+            was_at_bottom = True
         for msg in self.state.messages:
             align = "right" if msg.user == self.state.user else "left"
             meta_style = f"class:message.meta.{align}"
@@ -131,7 +143,8 @@ class ChatUI:
             line_count += 1
         self.output_control.text = FormattedText(formatted)
         self._last_line_count = line_count
-        self._scroll_to_bottom()
+        if was_at_bottom:
+            self._scroll_to_bottom()
         self.app.invalidate()
 
     def _decrypt(self, ciphertext: str) -> str:
@@ -176,6 +189,13 @@ class ChatUI:
         except Exception:
             columns = 80
         return max(20, columns - 4)
+
+    def _get_cursor_position(self) -> Point:
+        try:
+            scroll = self.output_window.vertical_scroll
+        except Exception:
+            scroll = 0
+        return Point(x=0, y=scroll)
 
     def _scroll_to_bottom(self) -> None:
         render_info = self.output_window.render_info
