@@ -8,6 +8,7 @@ import contextlib
 import json
 import os
 import ssl
+import textwrap
 from datetime import datetime
 from dataclasses import dataclass, field
 from getpass import getpass
@@ -18,7 +19,10 @@ import websockets
 from prompt_toolkit import Application
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout
+from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.layout import HSplit, Layout, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.margins import ScrollbarMargin
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
 
@@ -39,17 +43,34 @@ class ChatUI:
     def __init__(self, state: ClientState, send_callback) -> None:
         self.state = state
         self.send_callback = send_callback
-        self.output = TextArea(
-            text="", read_only=True, scrollbar=True, wrap_lines=True, focusable=False
+        self.output_control = FormattedTextControl(text=[])
+        self.output_window = Window(
+            content=self.output_control,
+            wrap_lines=True,
+            right_margins=[ScrollbarMargin(display_arrows=True)],
+            always_hide_cursor=True,
+            style="class:output",
         )
+        self._last_line_count = 0
         self.input = TextArea(height=5, prompt="> ", multiline=True, wrap_lines=True)
-        self.style = Style.from_dict({"frame.border": "ansicyan"})
+        self.style = Style.from_dict(
+            {
+                "frame.border": "ansicyan",
+                "output": "bg:#1a1b26 fg:#c0caf5",
+                "message.meta.left": "fg:#a9b1d6",
+                "message.meta.right": "fg:#9aa5ce",
+                "message.left": "fg:#7aa2f7",
+                "message.right": "fg:#9ece6a",
+                "message.reaction.left": "fg:#bb9af7",
+                "message.reaction.right": "fg:#f7768e",
+            }
+        )
         self._build_bindings()
         self.app = Application(
             layout=Layout(
                 HSplit(
                     [
-                        Frame(self.output, title="Chat", style="class:frame"),
+                        Frame(self.output_window, title="Chat", style="class:frame"),
                         Frame(self.input, title="Ctrl+J for newline, Enter to send"),
                     ]
                 ),
@@ -82,20 +103,35 @@ class ChatUI:
 
         @kb.add("c-l")
         def _(event) -> None:  # type: ignore[override]
-            self.output.buffer.cursor_position = len(self.output.text)
+            self._scroll_to_bottom()
 
         self.bindings = kb
 
     def render_messages(self) -> None:
-        lines: List[str] = []
+        formatted: List[tuple[str, str]] = []
+        width = self._get_content_width()
+        line_count = 0
         for msg in self.state.messages:
-            reactions = self._format_reactions(msg.reactions)
-            lines.append(
-                f"[{msg.id}] {msg.user} @ {self._format_timestamp(msg.timestamp)}\n"
-                f"{self._decrypt(msg.ciphertext)}{reactions}\n"
-            )
-        self.output.text = "\n".join(lines)
-        self.output.buffer.cursor_position = len(self.output.text)
+            align = "right" if msg.user == self.state.user else "left"
+            meta_style = f"class:message.meta.{align}"
+            body_style = f"class:message.{align}"
+            reaction_style = f"class:message.reaction.{align}"
+            header = f"[{msg.id}] {msg.user} @ {self._format_timestamp(msg.timestamp)}"
+            for line in self._align_text(header, width, align):
+                formatted.append((meta_style, f"{line}\n"))
+                line_count += 1
+            for line in self._align_text(self._decrypt(msg.ciphertext), width, align):
+                formatted.append((body_style, f"{line}\n"))
+                line_count += 1
+            for reaction_line in self._format_reactions(msg.reactions):
+                for line in self._align_text(reaction_line, width, align):
+                    formatted.append((reaction_style, f"{line}\n"))
+                    line_count += 1
+            formatted.append(("", "\n"))
+            line_count += 1
+        self.output_control.text = FormattedText(formatted)
+        self._last_line_count = line_count
+        self._scroll_to_bottom()
         self.app.invalidate()
 
     def _decrypt(self, ciphertext: str) -> str:
@@ -105,14 +141,14 @@ class ChatUI:
             return "*** Unable to decrypt: check your password ***"
 
     @staticmethod
-    def _format_reactions(reactions: List[Reaction]) -> str:
+    def _format_reactions(reactions: List[Reaction]) -> List[str]:
         if not reactions:
-            return ""
+            return []
         summary: Dict[str, List[str]] = {}
         for reaction in reactions:
             summary.setdefault(reaction.emoji, []).append(reaction.user)
         parts = [f"{emoji} x{len(users)} ({', '.join(users)})" for emoji, users in summary.items()]
-        return "\n  Reactions: " + ", ".join(parts)
+        return ["Reactions: " + ", ".join(parts)]
 
     @staticmethod
     def _format_timestamp(timestamp: str) -> str:
@@ -124,6 +160,29 @@ class ChatUI:
             except ValueError:
                 return timestamp
         return f"{parsed.day} {parsed.strftime('%b %Y, %I:%M%p')}"
+
+    @staticmethod
+    def _align_text(text: str, width: int, align: str) -> List[str]:
+        lines: List[str] = []
+        for raw_line in text.splitlines() or [""]:
+            wrapped = textwrap.wrap(raw_line, width=width) or [""]
+            for line in wrapped:
+                lines.append(line.rjust(width) if align == "right" else line)
+        return lines
+
+    def _get_content_width(self) -> int:
+        try:
+            columns = get_app().output.get_size().columns
+        except Exception:
+            columns = 80
+        return max(20, columns - 4)
+
+    def _scroll_to_bottom(self) -> None:
+        render_info = self.output_window.render_info
+        if not render_info:
+            return
+        visible_height = render_info.window_height
+        self.output_window.vertical_scroll = max(0, self._last_line_count - visible_height)
 
     async def run(self) -> None:
         await self.app.run_async()
