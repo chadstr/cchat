@@ -39,6 +39,9 @@ For development with a self-signed certificate, keep TLS but skip verification:
 ```bash
 python -m cchat.client --server wss://<host>:8765 --insecure
 ```
+Debug options:
+- `--insecure` skips TLS verification (self-signed certs).
+- `--user <name>` overrides the display name and updates the config.
 The client workflow:
 1. Connects to the server to verify reachability
 2. Prompts for your display name (stored in `~/.config/cchat/config.json`)

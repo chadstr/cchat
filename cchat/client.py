@@ -229,9 +229,13 @@ async def load_username() -> str:
             pass
 
     username = input("Enter a display name: ").strip()
+    save_username(username)
+    return username
+
+
+def save_username(username: str) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps({"username": username}))
-    return username
 
 
 async def run_client(args: argparse.Namespace) -> None:
@@ -246,7 +250,11 @@ async def run_client(args: argparse.Namespace) -> None:
         await websocket.recv()  # hello
         print("Connected to server. Encryption handshake still local to your password.")
 
-        username = args.user or await load_username()
+        if args.user:
+            username = args.user
+            save_username(username)
+        else:
+            username = await load_username()
         password = getpass("Enter shared password (not stored): ")
         cipher = CipherBundle.from_password(password)
         state = ClientState(user=username, cipher=cipher)
