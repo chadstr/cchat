@@ -8,6 +8,7 @@ import contextlib
 import json
 import os
 import ssl
+from datetime import datetime
 from dataclasses import dataclass, field
 from getpass import getpass
 from pathlib import Path
@@ -22,7 +23,7 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
 
 from .crypto import CipherBundle
-from .models import ChatMessage, Reaction, now_iso
+from .models import ChatMessage, ISO_FORMAT, Reaction, now_iso
 
 CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "cchat" / "config.json"
 
@@ -90,7 +91,8 @@ class ChatUI:
         for msg in self.state.messages:
             reactions = self._format_reactions(msg.reactions)
             lines.append(
-                f"[{msg.id}] {msg.user} @ {msg.timestamp}\n{self._decrypt(msg.ciphertext)}{reactions}\n"
+                f"[{msg.id}] {msg.user} @ {self._format_timestamp(msg.timestamp)}\n"
+                f"{self._decrypt(msg.ciphertext)}{reactions}\n"
             )
         self.output.text = "\n".join(lines)
         self.output.buffer.cursor_position = len(self.output.text)
@@ -111,6 +113,17 @@ class ChatUI:
             summary.setdefault(reaction.emoji, []).append(reaction.user)
         parts = [f"{emoji} x{len(users)} ({', '.join(users)})" for emoji, users in summary.items()]
         return "\n  Reactions: " + ", ".join(parts)
+
+    @staticmethod
+    def _format_timestamp(timestamp: str) -> str:
+        try:
+            parsed = datetime.strptime(timestamp, ISO_FORMAT)
+        except ValueError:
+            try:
+                parsed = datetime.fromisoformat(timestamp)
+            except ValueError:
+                return timestamp
+        return f"{parsed.day} {parsed.strftime('%b %Y, %I:%M%p')}"
 
     async def run(self) -> None:
         await self.app.run_async()
