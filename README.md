@@ -35,6 +35,10 @@ If you are tunneling with Cloudflare, point the tunnel at the same host/port.
 ```bash
 python -m cchat.client --server wss://<host>:8765
 ```
+For development with a self-signed certificate, keep TLS but skip verification:
+```bash
+python -m cchat.client --server wss://<host>:8765 --insecure
+```
 The client workflow:
 1. Connects to the server to verify reachability
 2. Prompts for your display name (stored in `~/.config/cchat/config.json`)

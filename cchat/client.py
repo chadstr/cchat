@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import json
 import os
+import ssl
 from dataclasses import dataclass, field
 from getpass import getpass
 from pathlib import Path
@@ -142,7 +143,14 @@ async def load_username() -> str:
 
 
 async def run_client(args: argparse.Namespace) -> None:
-    async with websockets.connect(args.server, ssl=not args.insecure) as websocket:
+    ssl_context = None
+    if args.server.startswith("wss://"):
+        ssl_context = ssl.create_default_context()
+        if args.insecure:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+    async with websockets.connect(args.server, ssl=ssl_context) as websocket:
         await websocket.recv()  # hello
         print("Connected to server. Encryption handshake still local to your password.")
 
