@@ -128,6 +128,8 @@ class ChatUI:
 async def load_username() -> str:
     if CONFIG_PATH.exists():
         try:
+            import json
+
             data = json.loads(CONFIG_PATH.read_text())
             if username := data.get("username"):
                 return username
