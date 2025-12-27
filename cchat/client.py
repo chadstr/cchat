@@ -39,7 +39,7 @@ class ChatUI:
         self.state = state
         self.send_callback = send_callback
         self.output = TextArea(
-            text="", read_only=True, scrollbar=True, wrap_lines=True, focusable=True
+            text="", read_only=True, scrollbar=True, wrap_lines=True, focusable=False
         )
         self.input = TextArea(height=5, prompt="> ", multiline=True, wrap_lines=True)
         self.style = Style.from_dict({"frame.border": "ansicyan"})
@@ -49,9 +49,10 @@ class ChatUI:
                 HSplit(
                     [
                         Frame(self.output, title="Chat", style="class:frame"),
-                        Frame(self.input, title="Shift+Enter for newline, Enter to send"),
+                        Frame(self.input, title="Ctrl+J for newline, Enter to send"),
                     ]
-                )
+                ),
+                focused_element=self.input,
             ),
             key_bindings=self.bindings,
             mouse_support=True,
@@ -62,11 +63,12 @@ class ChatUI:
     def _build_bindings(self) -> None:
         kb = KeyBindings()
 
+        @kb.add("c-j")
+        def _(event) -> None:  # type: ignore[override]
+            event.current_buffer.insert_text("\n")
+
         @kb.add("enter")
         def _(event) -> None:  # type: ignore[override]
-            if event.shift_pressed:
-                event.current_buffer.insert_text("\n")
-                return
             text = event.current_buffer.text.rstrip()
             event.current_buffer.text = ""
             if text:
@@ -91,8 +93,8 @@ class ChatUI:
                 f"[{msg.id}] {msg.user} @ {msg.timestamp}\n{self._decrypt(msg.ciphertext)}{reactions}\n"
             )
         self.output.text = "\n".join(lines)
-        if get_app(return_none=True):
-            self.output.buffer.cursor_position = len(self.output.text)
+        self.output.buffer.cursor_position = len(self.output.text)
+        self.app.invalidate()
 
     def _decrypt(self, ciphertext: str) -> str:
         try:
