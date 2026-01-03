@@ -175,6 +175,7 @@ class ChatApp(App[None]):
         react_callback,
         reconnect_event: asyncio.Event,
         idle_timeout_seconds: int,
+        show_message_id: bool,
     ) -> None:
         super().__init__()
         self.state = state
@@ -182,6 +183,7 @@ class ChatApp(App[None]):
         self.react_callback = react_callback
         self._reconnect_event = reconnect_event
         self._idle_timeout = timedelta(seconds=idle_timeout_seconds)
+        self._show_message_id = show_message_id
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
         self._selected_message_id: int | None = None
@@ -315,7 +317,7 @@ class ChatApp(App[None]):
             reaction_style = "#9aa0a6"
             body_text = self._decrypt(msg.ciphertext)
             body_lines = self._format_reply_lines(body_text, body_style)
-            header_text = f"[{msg.id}] {msg.user} @ {self._format_timestamp(msg.timestamp)}"
+            header_text = self._format_header(msg)
             reaction_lines = self._format_reactions(msg.reactions)
             if msg.id == self._selected_message_id:
                 line_index = self._render_selected_message(
@@ -502,6 +504,12 @@ class ChatApp(App[None]):
         parts = [f"{emoji} x{len(users)} ({', '.join(users)})" for emoji, users in summary.items()]
         return [", ".join(parts)]
 
+    def _format_header(self, message: ChatMessage) -> str:
+        base = f"{message.user} @ {self._format_timestamp(message.timestamp)}"
+        if self._show_message_id:
+            return f"[{message.id}] {base}"
+        return base
+
     @staticmethod
     def _format_timestamp(timestamp: str) -> str:
         try:
@@ -632,6 +640,7 @@ async def run_client(args: argparse.Namespace) -> None:
             ),
             reconnect_event=reconnect_event,
             idle_timeout_seconds=args.idle_timeout,
+            show_message_id=args.show_message_id,
         )
         listener_task = asyncio.create_task(listen_server(websocket, state, ui))
 
@@ -720,6 +729,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=15,
         help="Seconds of inactivity before messages count as unread",
+    )
+    parser.add_argument(
+        "--show-message-id",
+        action="store_true",
+        help="Show message IDs in chat headers",
     )
     return parser.parse_args()
 

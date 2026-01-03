@@ -43,6 +43,7 @@ Debug options:
 - `--insecure` skips TLS verification (self-signed certs).
 - `--user <name>` overrides the display name and updates the config.
 - `--idle-timeout <seconds>` sets the inactivity threshold before messages count as unread (default: 15).
+- `--show-message-id` includes message IDs in chat headers for reference.
 The client workflow:
 1. Connects to the server to verify reachability
 2. Prompts for your display name (stored in `~/.config/cchat/config.json`)
@@ -71,5 +72,5 @@ source .venv/bin/activate
 python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key
 
 # Client
-python -m cchat.client --server wss://127.0.0.1:8765 --insecure --user user_one --idle-timeout 5
+python -m cchat.client --server wss://127.0.0.1:8765 --insecure --user user_one --idle-timeout 5 --show-message-id
 ```
