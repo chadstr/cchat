@@ -66,6 +66,9 @@ class ReactionMenu(Widget):
     ReactionMenu {
         background: #24283b;
         border: solid #7aa2f7;
+        layout: horizontal;
+        position: absolute;
+        layer: overlay;
         padding: 0 1;
         height: auto;
         width: auto;
