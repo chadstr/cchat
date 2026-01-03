@@ -42,6 +42,7 @@ python -m cchat.client --server wss://<host>:8765 --insecure
 Debug options:
 - `--insecure` skips TLS verification (self-signed certs).
 - `--user <name>` overrides the display name and updates the config.
+- `--idle-timeout <seconds>` sets the inactivity threshold before messages count as unread (default: 30).
 The client workflow:
 1. Connects to the server to verify reachability
 2. Prompts for your display name (stored in `~/.config/cchat/config.json`)

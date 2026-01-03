@@ -165,6 +165,7 @@ class ChatApp(App[None]):
         self._reaction_menu: ReactionMenu | None = None
         self._user_scrolled_up = False
         self._pending_message_count = 0
+        self._pending_start_index: int | None = None
         self._last_activity = datetime.now()
 
     def compose(self) -> ComposeResult:
@@ -235,7 +236,13 @@ class ChatApp(App[None]):
         log.clear()
         self._line_message_map.clear()
         line_index = 0
-        for msg in self.state.messages:
+        for index, msg in enumerate(self.state.messages):
+            if (
+                self._pending_message_count > 0
+                and self._pending_start_index is not None
+                and index == self._pending_start_index
+            ):
+                line_index = self._render_new_messages_marker(log, line_index)
             align = "right" if msg.user == self.state.user else "left"
             meta_style = "#9aa5ce" if align == "right" else "#a9b1d6"
             body_style = "#9ece6a" if align == "right" else "#7aa2f7"
@@ -295,6 +302,16 @@ class ChatApp(App[None]):
 
     def _clear_pending_messages(self) -> None:
         self._pending_message_count = 0
+        self._pending_start_index = None
+
+    @staticmethod
+    def _render_new_messages_marker(log: RichLog, line_index: int) -> int:
+        marker_style = "#9aa5ce"
+        log.write(Align(Text("New messages", style=marker_style), align="center"))
+        line_index += 1
+        log.write(Align(Text("-" * 40, style=marker_style), align="center"))
+        line_index += 1
+        return line_index
 
     def _mark_activity(self) -> None:
         self._last_activity = datetime.now()
@@ -338,6 +355,8 @@ class ChatApp(App[None]):
             not self._should_autoscroll(log) or self._is_idle()
         ):
             self._pending_message_count += 1
+            if self._pending_start_index is None:
+                self._pending_start_index = len(self.state.messages)
         self.state.messages.append(message)
         self.render_messages()
 
@@ -461,7 +480,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--idle-timeout",
         type=int,
-        default=120,
+        default=30,
         help="Seconds of inactivity before messages count as unread",
     )
     return parser.parse_args()
