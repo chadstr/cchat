@@ -30,6 +30,7 @@ from .models import ChatMessage, ISO_FORMAT, Reaction, now_iso
 
 CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "cchat" / "config.json"
 COMMON_REACTIONS = ["👍", "❤️", "😂", "🎉", "😮"]
+COMMON_EMOTICONS = ["😀", "😁", "😉", "😅", "😢", "😮", "😛", "❤️"]
 
 
 @dataclass
@@ -63,6 +64,16 @@ class ChatInput(TextArea):
                 event.stop()
                 event.prevent_default()
                 return
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        app = self.app
+        if isinstance(app, ChatApp):
+            app._mark_activity()
+        if event.button != 3:
+            return
+        if isinstance(app, ChatApp):
+            app.open_emoticon_menu(self, event)
+            event.stop()
 
     def action_clear_input(self) -> None:
         self.text = ""
@@ -111,6 +122,45 @@ class ReactionMenu(Widget):
                 app.reply_to_message_from_menu(self.message_id)
             else:
                 app.send_reaction_from_menu(self.message_id, label)
+
+
+class EmoticonMenu(Widget):
+    DEFAULT_CSS = """
+    EmoticonMenu {
+        background: #24283b;
+        border: solid #7aa2f7;
+        layout: horizontal;
+        position: absolute;
+        layer: overlay;
+        padding: 0 1;
+        height: auto;
+        width: auto;
+    }
+    EmoticonMenu Button {
+        min-width: 5;
+        margin: 0 1;
+        background: #1f2335;
+        color: #c0caf5;
+    }
+    EmoticonMenu Button:hover {
+        background: #3d59a1;
+        color: #f2f2f2;
+    }
+    """
+
+    def __init__(self, emoticons: List[str]) -> None:
+        super().__init__()
+        self.emoticons = emoticons
+
+    def compose(self) -> ComposeResult:
+        for emoticon in self.emoticons:
+            yield Button(emoticon)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        label = str(event.button.label)
+        app = self.app
+        if isinstance(app, ChatApp):
+            app.insert_emoticon_from_menu(label)
 
 
 class ChatLog(RichLog):
@@ -186,6 +236,7 @@ class ChatApp(App[None]):
         self._show_message_id = show_message_id
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
+        self._emoticon_menu: EmoticonMenu | None = None
         self._selected_message_id: int | None = None
         self._user_scrolled_up = False
         self._pending_message_count = 0
@@ -215,6 +266,8 @@ class ChatApp(App[None]):
 
     def on_mouse_down(self, event: MouseDown) -> None:
         self._mark_activity()
+        if event.button == 1:
+            self._dismiss_menus_if_needed(event)
         if event.button != 1 or self._reaction_menu is None:
             return
         x = getattr(event, "screen_x", event.x)
@@ -231,17 +284,60 @@ class ChatApp(App[None]):
     def send_from_input(self) -> None:
         if not self._connection_ok:
             return
+        self.dismiss_emoticon_menu()
         input_area = self.query_one("#input", TextArea)
         text = input_area.text.rstrip()
         input_area.text = ""
         if text:
             asyncio.create_task(self.send_callback(text))
 
+    def open_emoticon_menu(self, input_area: TextArea, event: MouseDown) -> None:
+        if self._reaction_menu is not None:
+            self.dismiss_reaction_menu(update=False)
+            self.render_messages()
+        self.dismiss_emoticon_menu()
+        menu = EmoticonMenu(COMMON_EMOTICONS)
+        self._emoticon_menu = menu
+        self.mount(menu)
+        menu.styles.offset = (input_area.region.x + event.x, input_area.region.y + event.y)
+        self.call_after_refresh(self._position_emoticon_menu, menu, input_area, event)
+
+    def dismiss_emoticon_menu(self) -> None:
+        if self._emoticon_menu is None:
+            return
+        self._emoticon_menu.remove()
+        self._emoticon_menu = None
+
+    def _position_emoticon_menu(
+        self,
+        menu: EmoticonMenu,
+        input_area: TextArea,
+        event: MouseDown,
+    ) -> None:
+        if menu is not self._emoticon_menu:
+            return
+        screen_width, screen_height = self.screen.size
+        menu_width, menu_height = menu.region.size
+        desired_x = input_area.region.x + event.x
+        desired_y = input_area.region.y + event.y
+        max_x = max(0, screen_width - menu_width)
+        max_y = max(0, screen_height - menu_height)
+        clamped_x = max(0, min(desired_x, max_x))
+        clamped_y = max(0, min(desired_y, max_y))
+        menu.styles.offset = (clamped_x, clamped_y)
+
+    def insert_emoticon_from_menu(self, emoticon: str) -> None:
+        self.dismiss_emoticon_menu()
+        input_area = self.query_one("#input", TextArea)
+        input_area.insert(emoticon)
+        input_area.focus()
+
     def open_reaction_menu(self, log: RichLog, event: MouseDown) -> None:
         line_index = event.y + log.scroll_y
         message_id = self._line_message_map.get(line_index)
         if message_id is None:
             return
+        self.dismiss_emoticon_menu()
         self.dismiss_reaction_menu(update=False)
         self._selected_message_id = message_id
         menu = ReactionMenu(message_id, COMMON_REACTIONS)
@@ -262,6 +358,22 @@ class ChatApp(App[None]):
         log = self.query_one("#chatlog", RichLog)
         self.update_scroll_state(log)
         if update:
+            self.render_messages()
+
+    def _dismiss_menus_if_needed(self, event: MouseDown) -> None:
+        x = getattr(event, "screen_x", event.x)
+        y = getattr(event, "screen_y", event.y)
+        needs_render = False
+        if self._reaction_menu is not None:
+            region = self._reaction_menu.region
+            if not (region.x <= x < region.x + region.width and region.y <= y < region.y + region.height):
+                self.dismiss_reaction_menu(update=False)
+                needs_render = True
+        if self._emoticon_menu is not None:
+            region = self._emoticon_menu.region
+            if not (region.x <= x < region.x + region.width and region.y <= y < region.y + region.height):
+                self.dismiss_emoticon_menu()
+        if needs_render:
             self.render_messages()
 
     def _position_reaction_menu(self, menu: ReactionMenu, log: RichLog, event: MouseDown) -> None:
