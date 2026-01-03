@@ -21,10 +21,49 @@ from .models import ChatMessage, Reaction, now_iso
 
 
 class ChatServer:
-    def __init__(self) -> None:
+    def __init__(self, history_path: Path | None = None) -> None:
         self._messages: List[ChatMessage] = []
         self._clients: Set[WebSocketServerProtocol] = set()
         self._next_id = 1
+        self._history_path = history_path
+        if self._history_path:
+            self._load_history()
+
+    def _load_history(self) -> None:
+        if not self._history_path:
+            return
+        try:
+            raw = self._history_path.read_text()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            print(f"Failed to read history file: {exc}")
+            return
+
+        try:
+            payload = json.loads(raw)
+            messages = payload.get("messages", [])
+            self._messages = [ChatMessage.from_payload(item) for item in messages]
+            if self._messages:
+                max_id = max(message.id for message in self._messages)
+                self._next_id = max_id + 1
+            else:
+                self._next_id = int(payload.get("next_id", 1))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            print(f"Failed to parse history file: {exc}")
+
+    def _save_history(self) -> None:
+        if not self._history_path:
+            return
+        payload = {
+            "next_id": self._next_id,
+            "messages": [message.to_payload() for message in self._messages],
+        }
+        try:
+            self._history_path.parent.mkdir(parents=True, exist_ok=True)
+            self._history_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        except OSError as exc:
+            print(f"Failed to write history file: {exc}")
 
     async def register(self, websocket: WebSocketServerProtocol) -> None:
         self._clients.add(websocket)
@@ -73,6 +112,7 @@ class ChatServer:
         )
         self._next_id += 1
         self._messages.append(message)
+        self._save_history()
         await self._broadcast({"type": "message", "message": message.to_payload()})
 
     async def _handle_reaction(self, payload: Dict) -> None:
@@ -99,6 +139,7 @@ class ChatServer:
             if not existing:
                 return
             target.reactions.remove(existing)
+            self._save_history()
             await self._broadcast(
                 {
                     "type": "reaction",
@@ -111,6 +152,7 @@ class ChatServer:
 
         reaction = Reaction(emoji=emoji, user=user, timestamp=now_iso())
         target.reactions.append(reaction)
+        self._save_history()
         await self._broadcast(
             {
                 "type": "reaction",
@@ -141,13 +183,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
     parser.add_argument("--certfile", type=Path, help="Path to TLS certificate (PEM)")
     parser.add_argument("--keyfile", type=Path, help="Path to TLS private key (PEM)")
+    parser.add_argument(
+        "--history-file",
+        type=Path,
+        help="Optional path to JSON history file for message retention",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     ssl_context = build_ssl_context(args.certfile, args.keyfile)
-    server = ChatServer()
+    server = ChatServer(history_path=args.history_file)
 
     async def run_server() -> None:
         async with websockets.serve(server.handler, args.host, args.port, ssl=ssl_context):

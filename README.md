@@ -31,6 +31,11 @@ openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 
 python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key
 ```
 If you are tunneling with Cloudflare, point the tunnel at the same host/port.
+To retain message history across restarts, supply a history file path:
+```bash
+python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key \
+  --history-file ./data/history.json
+```
 
 ### Run the client
 ```bash
@@ -72,7 +77,7 @@ The client workflow:
 source .venv/bin/activate
 
 # Server
-python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key
+python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key --history-file ./data/history.json
 
 # Client
 python -m cchat.client --server wss://127.0.0.1:8765 --insecure --user user_one --idle-timeout 5 --show-message-id
