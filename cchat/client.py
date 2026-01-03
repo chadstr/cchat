@@ -400,6 +400,7 @@ class ChatApp(App[None]):
         if not target:
             return
         body_text = self._decrypt(target.ciphertext)
+        body_text = self._extract_reply_body(body_text)
         lines = body_text.splitlines() or [""]
         quote_lines = "\n".join(f"| {line}" for line in lines)
         quote_block = f"*replying to: {target.user}*\n{quote_lines}\n\n"
@@ -549,6 +550,24 @@ class ChatApp(App[None]):
             else:
                 styled_lines.append((line, body_style))
         return styled_lines
+
+    def _extract_reply_body(self, body_text: str) -> str:
+        lines = body_text.splitlines()
+        if not lines:
+            return body_text
+        if not (lines[0].startswith("*replying to:") and lines[0].endswith("*")):
+            return body_text
+        idx = 1
+        while idx < len(lines) and lines[idx].startswith("| "):
+            idx += 1
+        remainder = lines[idx:]
+        if remainder:
+            return "\n".join(remainder)
+        for line in reversed(lines[1:idx]):
+            stripped = line[2:] if line.startswith("| ") else line
+            if stripped.strip():
+                return stripped
+        return ""
 
     def update_scroll_state(self, log: RichLog) -> None:
         max_scroll_y = getattr(log, "max_scroll_y", 0)
