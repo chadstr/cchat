@@ -94,13 +94,18 @@ class ReactionMenu(Widget):
         self.emojis = emojis
 
     def compose(self) -> ComposeResult:
+        yield Button("Reply to")
         for emoji in self.emojis:
             yield Button(emoji)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        label = str(event.button.label)
         app = self.app
         if isinstance(app, ChatApp):
-            app.send_reaction_from_menu(self.message_id, str(event.button.label))
+            if label == "Reply to":
+                app.reply_to_message_from_menu(self.message_id)
+            else:
+                app.send_reaction_from_menu(self.message_id, label)
 
 
 class ChatLog(RichLog):
@@ -239,6 +244,21 @@ class ChatApp(App[None]):
         remove = self._has_reaction(message_id, emoji)
         asyncio.create_task(self.react_callback(message_id, emoji, remove))
 
+    def reply_to_message_from_menu(self, message_id: int) -> None:
+        self.dismiss_reaction_menu()
+        target = next((m for m in self.state.messages if m.id == message_id), None)
+        if not target:
+            return
+        body_text = self._decrypt(target.ciphertext)
+        lines = body_text.splitlines() or [""]
+        quote_lines = "\n".join(f"| {line}" for line in lines)
+        quote_block = f"*replying to: {target.user}*\n{quote_lines}\n\n"
+        input_area = self.query_one("#input", TextArea)
+        if input_area.text and not input_area.text.endswith("\n"):
+            input_area.insert("\n")
+        input_area.insert(quote_block)
+        input_area.focus()
+
     def render_messages(self) -> None:
         log = self.query_one("#chatlog", RichLog)
         should_autoscroll = self._should_autoscroll(log)
@@ -258,6 +278,7 @@ class ChatApp(App[None]):
             body_style = "#bb9af7" if align == "right" else "#e0af68"
             reaction_style = "#9aa0a6"
             body_text = self._decrypt(msg.ciphertext)
+            body_lines = self._format_reply_lines(body_text, body_style)
             header_text = f"[{msg.id}] {msg.user} @ {self._format_timestamp(msg.timestamp)}"
             reaction_lines = self._format_reactions(msg.reactions)
             if msg.id == self._selected_message_id:
@@ -265,17 +286,20 @@ class ChatApp(App[None]):
                     log=log,
                     align=align,
                     header_text=header_text,
-                    body_text=body_text,
+                    body_lines=body_lines,
                     reaction_lines=reaction_lines,
                     meta_style=meta_style,
-                    body_style=body_style,
                     reaction_style=reaction_style,
                     line_index=line_index,
                     message_id=msg.id,
                 )
             else:
                 header = Text(header_text, style=meta_style)
-                body = Text(body_text, style=body_style)
+                body = Text()
+                for idx, (line, style) in enumerate(body_lines):
+                    if idx:
+                        body.append("\n")
+                    body.append(line, style=style)
                 log.write(Align(header, align=align))
                 log.write(Align(body, align=align))
                 self._line_message_map[line_index] = msg.id
@@ -314,17 +338,15 @@ class ChatApp(App[None]):
         log: RichLog,
         align: str,
         header_text: str,
-        body_text: str,
+        body_lines: List[tuple[str, str]],
         reaction_lines: List[str],
         meta_style: str,
-        body_style: str,
         reaction_style: str,
         line_index: int,
         message_id: int,
     ) -> int:
         lines: List[tuple[str, str]] = [(header_text, meta_style)]
-        body_lines = body_text.splitlines() or [""]
-        lines.extend((line, body_style) for line in body_lines)
+        lines.extend(body_lines)
         lines.extend((line, reaction_style) for line in reaction_lines)
 
         max_line_len = max(len(line) for line, _ in lines) if lines else 1
@@ -359,6 +381,24 @@ class ChatApp(App[None]):
         self._line_message_map[line_index] = message_id
         line_index += 1
         return line_index
+
+    def _format_reply_lines(self, body_text: str, body_style: str) -> List[tuple[str, str]]:
+        lines = body_text.splitlines() or [""]
+        styled_lines: List[tuple[str, str]] = []
+        reply_user_style = body_style
+        if lines and lines[0].startswith("*replying to:") and lines[0].endswith("*"):
+            header = lines[0].strip("*")
+            reply_user = header.split("replying to:", 1)[-1].strip()
+            if reply_user:
+                reply_user_style = "#bb9af7" if reply_user == self.state.user else "#e0af68"
+            styled_lines.append((header, f"italic {reply_user_style}"))
+            lines = lines[1:]
+        for line in lines:
+            if line.startswith("| "):
+                styled_lines.append((line, f"italic {reply_user_style}"))
+            else:
+                styled_lines.append((line, body_style))
+        return styled_lines
 
     def update_scroll_state(self, log: RichLog) -> None:
         max_scroll_y = getattr(log, "max_scroll_y", 0)
