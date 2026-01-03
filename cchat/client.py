@@ -144,7 +144,7 @@ class ChatApp(App[None]):
         height: 1fr;
     }
     #status {
-        height: 1;
+        height: 2;
         content-align: center middle;
         background: #1f2335;
         color: #9ece6a;
@@ -175,6 +175,7 @@ class ChatApp(App[None]):
         self._pending_message_count = 0
         self._pending_start_index: int | None = None
         self._last_activity = datetime.now()
+        self._connection_ok = True
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -424,12 +425,22 @@ class ChatApp(App[None]):
 
     def _update_status_indicator(self) -> None:
         label = self.query_one("#status", Label)
+        lines: List[tuple[str, str]] = []
+        if not self._connection_ok:
+            lines.append(("DISCONNECTED", "#f7768e"))
         if self._pending_message_count > 0:
-            label.update(f"{self._pending_message_count} new message(s)")
-            label.display = True
-        else:
+            lines.append((f"{self._pending_message_count} new message(s)", "#9ece6a"))
+        if not lines:
             label.update("")
             label.display = False
+            return
+        text = Text()
+        for idx, (line, style) in enumerate(lines):
+            if idx:
+                text.append("\n")
+            text.append(line, style=style)
+        label.update(text)
+        label.display = True
 
     def _clear_pending_messages(self) -> None:
         self._pending_message_count = 0
@@ -507,6 +518,12 @@ class ChatApp(App[None]):
         else:
             target.reactions.append(reaction)
         self.render_messages()
+
+    def set_connection_status(self, connected: bool) -> None:
+        if self._connection_ok == connected:
+            return
+        self._connection_ok = connected
+        self._update_status_indicator()
 
     def _has_reaction(self, message_id: int, emoji: str) -> bool:
         target = next((m for m in self.state.messages if m.id == message_id), None)
@@ -623,18 +640,26 @@ async def send_reaction(
 
 
 async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
-    async for raw in websocket:
-        payload = json.loads(raw)
-        msg_type = payload.get("type")
-        if msg_type == "history":
-            for message_payload in payload.get("messages", []):
-                ui.feed_message(ChatMessage.from_payload(message_payload))
-        elif msg_type == "message":
-            ui.feed_message(ChatMessage.from_payload(payload["message"]))
-        elif msg_type == "reaction":
-            reaction = Reaction(**payload["reaction"])
-            action = payload.get("action", "add")
-            ui.feed_reaction_action(payload["message_id"], reaction, action=action)
+    try:
+        async for raw in websocket:
+            payload = json.loads(raw)
+            msg_type = payload.get("type")
+            if msg_type == "history":
+                for message_payload in payload.get("messages", []):
+                    ui.feed_message(ChatMessage.from_payload(message_payload))
+            elif msg_type == "message":
+                ui.feed_message(ChatMessage.from_payload(payload["message"]))
+            elif msg_type == "reaction":
+                reaction = Reaction(**payload["reaction"])
+                action = payload.get("action", "add")
+                ui.feed_reaction_action(payload["message_id"], reaction, action=action)
+    except websockets.exceptions.ConnectionClosed:
+        ui.set_connection_status(False)
+    except Exception:
+        ui.set_connection_status(False)
+        raise
+    else:
+        ui.set_connection_status(False)
 
 
 def parse_args() -> argparse.Namespace:
