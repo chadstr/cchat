@@ -60,3 +60,16 @@ The client workflow:
   shared password.
 - The server stores only ciphertext and forwards it; it cannot decrypt content.
 - TLS secures the hop between client and server (recommended in production).
+
+## Debugging
+
+```sh
+# Both server and client
+source .venv/bin/activate
+
+# Server
+python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key
+
+# Client
+python -m cchat.client --server wss://127.0.0.1:8765 --insecure --user user_one --idle-timeout 5
+```

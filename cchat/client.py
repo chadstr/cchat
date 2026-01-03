@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import json
 import os
+import sys
 import textwrap
 import ssl
 from datetime import datetime, timedelta
@@ -47,6 +48,10 @@ class ChatInput(TextArea):
         app = self.app
         if isinstance(app, ChatApp):
             app._mark_activity()
+            if not app.connection_ok and event.key != "ctrl+r":
+                event.stop()
+                event.prevent_default()
+                return
         if event.key in {"shift+enter", "ctrl+j"}:
             self.insert("\n")
             event.stop()
@@ -160,13 +165,22 @@ class ChatApp(App[None]):
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+d", "quit", "Quit"),
         ("ctrl+l", "scroll_end", "Bottom"),
+        ("ctrl+r", "reconnect", "Reconnect"),
     ]
 
-    def __init__(self, state: ClientState, send_callback, react_callback, idle_timeout_seconds: int) -> None:
+    def __init__(
+        self,
+        state: ClientState,
+        send_callback,
+        react_callback,
+        restart_callback,
+        idle_timeout_seconds: int,
+    ) -> None:
         super().__init__()
         self.state = state
         self.send_callback = send_callback
         self.react_callback = react_callback
+        self.restart_callback = restart_callback
         self._idle_timeout = timedelta(seconds=idle_timeout_seconds)
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
@@ -176,6 +190,12 @@ class ChatApp(App[None]):
         self._pending_start_index: int | None = None
         self._last_activity = datetime.now()
         self._connection_ok = True
+        self._reconnect_attempted = False
+        self._restart_requested = False
+
+    @property
+    def connection_ok(self) -> bool:
+        return self._connection_ok
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -208,6 +228,8 @@ class ChatApp(App[None]):
         self._clear_pending_messages()
 
     def send_from_input(self) -> None:
+        if not self._connection_ok:
+            return
         input_area = self.query_one("#input", TextArea)
         text = input_area.text.rstrip()
         input_area.text = ""
@@ -428,6 +450,7 @@ class ChatApp(App[None]):
         lines: List[tuple[str, str]] = []
         if not self._connection_ok:
             lines.append(("DISCONNECTED", "#f7768e"))
+            lines.append(("Press Ctrl+R to reconnect", "#c0caf5"))
         if self._pending_message_count > 0:
             lines.append((f"{self._pending_message_count} new message(s)", "#9ece6a"))
         if not lines:
@@ -523,7 +546,29 @@ class ChatApp(App[None]):
         if self._connection_ok == connected:
             return
         self._connection_ok = connected
+        input_area = self.query_one("#input", TextArea)
+        input_area.disabled = not connected
+        if connected:
+            input_area.focus()
         self._update_status_indicator()
+
+    def action_reconnect(self) -> None:
+        if self._connection_ok or self._reconnect_attempted:
+            return
+        self._reconnect_attempted = True
+        self._restart_requested = True
+        self.exit()
+
+    @property
+    def restart_requested(self) -> bool:
+        return self._restart_requested
+
+
+def _restart_args() -> List[str]:
+    spec = globals().get("__spec__")
+    if spec and getattr(spec, "name", None):
+        return [sys.executable, "-m", spec.name, *sys.argv[1:]]
+    return [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
 
     def _has_reaction(self, message_id: int, emoji: str) -> bool:
         target = next((m for m in self.state.messages if m.id == message_id), None)
@@ -574,6 +619,10 @@ async def run_client(args: argparse.Namespace) -> None:
         password = getpass("Enter shared password (not stored): ")
         cipher = CipherBundle.from_password(password)
         state = ClientState(user=username, cipher=cipher)
+        restart_args = _restart_args()
+
+        def restart_client() -> None:
+            os.execv(restart_args[0], restart_args)
 
         ui = ChatApp(
             state,
@@ -585,12 +634,15 @@ async def run_client(args: argparse.Namespace) -> None:
                 emoji,
                 remove=remove,
             ),
+            restart_callback=restart_client,
             idle_timeout_seconds=args.idle_timeout,
         )
         listener_task = asyncio.create_task(listen_server(websocket, state, ui))
 
         try:
             await ui.run_async()
+            if ui.restart_requested:
+                restart_client()
         finally:
             listener_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
