@@ -8,7 +8,6 @@ import contextlib
 import json
 import os
 import ssl
-import textwrap
 from datetime import datetime
 from dataclasses import dataclass, field
 from getpass import getpass
@@ -16,16 +15,11 @@ from pathlib import Path
 from typing import Dict, List
 
 import websockets
-from prompt_toolkit import Application
-from prompt_toolkit.application.current import get_app
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.data_structures import Point
-from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.layout import HSplit, Layout, Window
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.margins import ScrollbarMargin
-from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Frame, TextArea
+from rich.align import Align
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.events import Key
+from textual.widgets import Footer, Header, RichLog, TextArea
 
 from .crypto import CipherBundle
 from .models import ChatMessage, ISO_FORMAT, Reaction, now_iso
@@ -40,112 +34,88 @@ class ClientState:
     messages: List[ChatMessage] = field(default_factory=list)
 
 
-class ChatUI:
+class ChatInput(TextArea):
+    def on_key(self, event: Key) -> None:
+        if event.key == "enter":
+            app = self.app
+            if isinstance(app, ChatApp):
+                app.send_from_input()
+                event.stop()
+                event.prevent_default()
+                return
+        if event.key in {"shift+enter", "ctrl+j"}:
+            self.insert("\n")
+            event.stop()
+            event.prevent_default()
+
+
+class ChatApp(App[None]):
+    CSS = """
+    Screen {
+        background: #1a1b26;
+        color: #c0caf5;
+    }
+    #chatlog {
+        padding: 1 2;
+        height: 1fr;
+    }
+    #input {
+        height: 6;
+        border: tall #7aa2f7;
+        padding: 0 1;
+    }
+    """
+
+    BINDINGS = [
+        ("ctrl+c", "quit", "Quit"),
+        ("ctrl+d", "quit", "Quit"),
+        ("ctrl+l", "scroll_end", "Bottom"),
+    ]
+
     def __init__(self, state: ClientState, send_callback) -> None:
+        super().__init__()
         self.state = state
         self.send_callback = send_callback
-        self.output_control = FormattedTextControl(
-            text=[],
-            show_cursor=False,
-            get_cursor_position=self._get_cursor_position,
-        )
-        self.output_window = Window(
-            content=self.output_control,
-            wrap_lines=True,
-            right_margins=[ScrollbarMargin(display_arrows=True)],
-            always_hide_cursor=True,
-            style="class:output",
-        )
-        self._last_line_count = 0
-        self.input = TextArea(height=5, prompt="> ", multiline=True, wrap_lines=True)
-        self.style = Style.from_dict(
-            {
-                "frame.border": "ansicyan",
-                "output": "bg:#1a1b26 fg:#c0caf5",
-                "message.meta.left": "fg:#a9b1d6",
-                "message.meta.right": "fg:#9aa5ce",
-                "message.left": "fg:#7aa2f7",
-                "message.right": "fg:#9ece6a",
-                "message.reaction.left": "fg:#bb9af7",
-                "message.reaction.right": "fg:#f7768e",
-            }
-        )
-        self._build_bindings()
-        self.app = Application(
-            layout=Layout(
-                HSplit(
-                    [
-                        Frame(self.output_window, title="Chat", style="class:frame"),
-                        Frame(self.input, title="Ctrl+J for newline, Enter to send"),
-                    ]
-                ),
-                focused_element=self.input,
-            ),
-            key_bindings=self.bindings,
-            mouse_support=True,
-            style=self.style,
-            full_screen=True,
-        )
 
-    def _build_bindings(self) -> None:
-        kb = KeyBindings()
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        yield RichLog(id="chatlog", wrap=True, highlight=False)
+        yield ChatInput(id="input", show_line_numbers=False)
+        yield Footer()
 
-        @kb.add("c-j")
-        def _(event) -> None:  # type: ignore[override]
-            event.current_buffer.insert_text("\n")
+    def on_mount(self) -> None:
+        self.query_one("#input", TextArea).focus()
+        self.render_messages()
 
-        @kb.add("enter")
-        def _(event) -> None:  # type: ignore[override]
-            text = event.current_buffer.text.rstrip()
-            event.current_buffer.text = ""
-            if text:
-                self.send_callback(text)
+    def action_scroll_end(self) -> None:
+        self.query_one("#chatlog", RichLog).scroll_end(animate=False)
 
-        @kb.add("c-c")
-        @kb.add("c-d")
-        def _(event) -> None:  # type: ignore[override]
-            event.app.exit(result=None)
-
-        @kb.add("c-l")
-        def _(event) -> None:  # type: ignore[override]
-            self._scroll_to_bottom()
-
-        self.bindings = kb
+    def send_from_input(self) -> None:
+        input_area = self.query_one("#input", TextArea)
+        text = input_area.text.rstrip()
+        input_area.text = ""
+        if text:
+            asyncio.create_task(self.send_callback(text))
 
     def render_messages(self) -> None:
-        formatted: List[tuple[str, str]] = []
-        width = self._get_content_width()
-        line_count = 0
-        render_info = self.output_window.render_info
-        if render_info:
-            visible_height = render_info.window_height
-            max_scroll = max(0, self._last_line_count - visible_height)
-            was_at_bottom = self.output_window.vertical_scroll >= max_scroll
-        else:
-            was_at_bottom = True
+        log = self.query_one("#chatlog", RichLog)
+        log.clear()
         for msg in self.state.messages:
             align = "right" if msg.user == self.state.user else "left"
-            meta_style = f"class:message.meta.{align}"
-            body_style = f"class:message.{align}"
-            reaction_style = f"class:message.reaction.{align}"
-            header = f"[{msg.id}] {msg.user} @ {self._format_timestamp(msg.timestamp)}"
-            for line in self._align_text(header, width, align):
-                formatted.append((meta_style, f"{line}\n"))
-                line_count += 1
-            for line in self._align_text(self._decrypt(msg.ciphertext), width, align):
-                formatted.append((body_style, f"{line}\n"))
-                line_count += 1
+            meta_style = "#9aa5ce" if align == "right" else "#a9b1d6"
+            body_style = "#9ece6a" if align == "right" else "#7aa2f7"
+            reaction_style = "#f7768e" if align == "right" else "#bb9af7"
+            header = Text(
+                f"[{msg.id}] {msg.user} @ {self._format_timestamp(msg.timestamp)}",
+                style=meta_style,
+            )
+            body = Text(self._decrypt(msg.ciphertext), style=body_style)
+            log.write(Align(header, align=align))
+            log.write(Align(body, align=align))
             for reaction_line in self._format_reactions(msg.reactions):
-                for line in self._align_text(reaction_line, width, align):
-                    formatted.append((reaction_style, f"{line}\n"))
-                    line_count += 1
-            formatted.append(("", "\n"))
-            line_count += 1
-        self.output_control.text = FormattedText(formatted)
-        self._last_line_count = line_count
-        if was_at_bottom:
-            self._scroll_to_bottom()
-        self.app.invalidate()
+                log.write(Align(Text(reaction_line, style=reaction_style), align=align))
+            log.write(Text(""))
+        self.action_scroll_end()
 
     def _decrypt(self, ciphertext: str) -> str:
         try:
@@ -173,39 +143,6 @@ class ChatUI:
             except ValueError:
                 return timestamp
         return f"{parsed.day} {parsed.strftime('%b %Y, %I:%M%p')}"
-
-    @staticmethod
-    def _align_text(text: str, width: int, align: str) -> List[str]:
-        lines: List[str] = []
-        for raw_line in text.splitlines() or [""]:
-            wrapped = textwrap.wrap(raw_line, width=width) or [""]
-            for line in wrapped:
-                lines.append(line.rjust(width) if align == "right" else line)
-        return lines
-
-    def _get_content_width(self) -> int:
-        try:
-            columns = get_app().output.get_size().columns
-        except Exception:
-            columns = 80
-        return max(20, columns - 4)
-
-    def _get_cursor_position(self) -> Point:
-        try:
-            scroll = self.output_window.vertical_scroll
-        except Exception:
-            scroll = 0
-        return Point(x=0, y=scroll)
-
-    def _scroll_to_bottom(self) -> None:
-        render_info = self.output_window.render_info
-        if not render_info:
-            return
-        visible_height = render_info.window_height
-        self.output_window.vertical_scroll = max(0, self._last_line_count - visible_height)
-
-    async def run(self) -> None:
-        await self.app.run_async()
 
     def feed_message(self, message: ChatMessage) -> None:
         self.state.messages.append(message)
@@ -259,11 +196,11 @@ async def run_client(args: argparse.Namespace) -> None:
         cipher = CipherBundle.from_password(password)
         state = ClientState(user=username, cipher=cipher)
 
-        ui = ChatUI(state, send_callback=lambda text: asyncio.create_task(route_command(websocket, state, text)))
+        ui = ChatApp(state, send_callback=lambda text: route_command(websocket, state, text))
         listener_task = asyncio.create_task(listen_server(websocket, state, ui))
 
         try:
-            await ui.run()
+            await ui.run_async()
         finally:
             listener_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -304,7 +241,7 @@ async def send_reaction(websocket, state: ClientState, message_id: int, emoji: s
     )
 
 
-async def listen_server(websocket, state: ClientState, ui: ChatUI) -> None:
+async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
     async for raw in websocket:
         payload = json.loads(raw)
         msg_type = payload.get("type")

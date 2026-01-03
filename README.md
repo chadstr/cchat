@@ -7,7 +7,7 @@ clients. TLS keeps the hop between client and server protected.
 ## Features
 - WebSocket server with optional TLS (supply your own cert + key)
 - Client-side encryption using a pre-shared password (never written to disk)
-- Terminal UI: Enter to send, Shift+Enter for new lines, scrollable history
+- Terminal UI (Textual): Enter to send, Shift+Enter or Ctrl+J for new lines, scrollable history
 - Message reactions via `/react <message_id> <emoji>`
 
 ## Getting started
