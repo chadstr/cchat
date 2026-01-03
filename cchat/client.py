@@ -193,7 +193,6 @@ class ChatApp(App[None]):
 
     def render_messages(self) -> None:
         log = self.query_one("#chatlog", RichLog)
-        self.dismiss_reaction_menu()
         log.clear()
         self._line_message_map.clear()
         line_index = 0
