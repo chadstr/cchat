@@ -8,7 +8,7 @@ import contextlib
 import json
 import os
 import ssl
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from getpass import getpass
 from pathlib import Path
@@ -43,13 +43,15 @@ class ChatInput(TextArea):
     ]
 
     def on_key(self, event: Key) -> None:
+        app = self.app
+        if isinstance(app, ChatApp):
+            app._mark_activity()
         if event.key in {"shift+enter", "ctrl+j"}:
             self.insert("\n")
             event.stop()
             event.prevent_default()
             return
         if event.key == "enter":
-            app = self.app
             if isinstance(app, ChatApp):
                 app.send_from_input()
                 event.stop()
@@ -102,9 +104,11 @@ class ReactionMenu(Widget):
 
 class ChatLog(RichLog):
     def on_mouse_down(self, event: MouseDown) -> None:
+        app = self.app
+        if isinstance(app, ChatApp):
+            app._mark_activity()
         if event.button != 3:
             return
-        app = self.app
         if isinstance(app, ChatApp):
             app.open_reaction_menu(self, event)
             event.stop()
@@ -112,11 +116,13 @@ class ChatLog(RichLog):
     def on_mouse_scroll_up(self, event) -> None:
         app = self.app
         if isinstance(app, ChatApp):
+            app._mark_activity()
             app.update_scroll_state(self)
 
     def on_mouse_scroll_down(self, event) -> None:
         app = self.app
         if isinstance(app, ChatApp):
+            app._mark_activity()
             app.update_scroll_state(self)
 
 
@@ -149,15 +155,17 @@ class ChatApp(App[None]):
         ("ctrl+l", "scroll_end", "Bottom"),
     ]
 
-    def __init__(self, state: ClientState, send_callback, react_callback) -> None:
+    def __init__(self, state: ClientState, send_callback, react_callback, idle_timeout_seconds: int) -> None:
         super().__init__()
         self.state = state
         self.send_callback = send_callback
         self.react_callback = react_callback
+        self._idle_timeout = timedelta(seconds=idle_timeout_seconds)
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
         self._user_scrolled_up = False
         self._pending_message_count = 0
+        self._last_activity = datetime.now()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -171,7 +179,11 @@ class ChatApp(App[None]):
         self.render_messages()
         self._update_status_indicator()
 
+    def on_key(self, event: Key) -> None:
+        self._mark_activity()
+
     def on_mouse_down(self, event: MouseDown) -> None:
+        self._mark_activity()
         if event.button != 1 or self._reaction_menu is None:
             return
         x = getattr(event, "screen_x", event.x)
@@ -249,7 +261,11 @@ class ChatApp(App[None]):
             self._line_message_map[line_index] = msg.id
             line_index += 1
         if should_autoscroll:
-            self.action_scroll_end()
+            if self._is_idle():
+                log.scroll_end(animate=False)
+                self._user_scrolled_up = False
+            else:
+                self.action_scroll_end()
         self._update_status_indicator()
 
     def _should_autoscroll(self, log: RichLog) -> bool:
@@ -280,6 +296,15 @@ class ChatApp(App[None]):
     def _clear_pending_messages(self) -> None:
         self._pending_message_count = 0
 
+    def _mark_activity(self) -> None:
+        self._last_activity = datetime.now()
+        if not self._user_scrolled_up:
+            self._clear_pending_messages()
+            self._update_status_indicator()
+
+    def _is_idle(self) -> bool:
+        return datetime.now() - self._last_activity >= self._idle_timeout
+
     def _decrypt(self, ciphertext: str) -> str:
         try:
             return self.state.cipher.decrypt_text(ciphertext)
@@ -309,7 +334,9 @@ class ChatApp(App[None]):
 
     def feed_message(self, message: ChatMessage) -> None:
         log = self.query_one("#chatlog", RichLog)
-        if message.user != self.state.user and not self._should_autoscroll(log):
+        if message.user != self.state.user and (
+            not self._should_autoscroll(log) or self._is_idle()
+        ):
             self._pending_message_count += 1
         self.state.messages.append(message)
         self.render_messages()
@@ -366,6 +393,7 @@ async def run_client(args: argparse.Namespace) -> None:
             state,
             send_callback=lambda text: route_command(websocket, state, text),
             react_callback=lambda message_id, emoji: send_reaction(websocket, state, message_id, emoji),
+            idle_timeout_seconds=args.idle_timeout,
         )
         listener_task = asyncio.create_task(listen_server(websocket, state, ui))
 
@@ -430,6 +458,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--server", default="wss://localhost:8765", help="WebSocket server URL")
     parser.add_argument("--user", help="Display name (otherwise remembered from config)")
     parser.add_argument("--insecure", action="store_true", help="Skip SSL verification (development only)")
+    parser.add_argument(
+        "--idle-timeout",
+        type=int,
+        default=120,
+        help="Seconds of inactivity before messages count as unread",
+    )
     return parser.parse_args()
 
 
