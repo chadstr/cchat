@@ -236,7 +236,8 @@ class ChatApp(App[None]):
 
     def send_reaction_from_menu(self, message_id: int, emoji: str) -> None:
         self.dismiss_reaction_menu()
-        asyncio.create_task(self.react_callback(message_id, emoji))
+        remove = self._has_reaction(message_id, emoji)
+        asyncio.create_task(self.react_callback(message_id, emoji, remove))
 
     def render_messages(self) -> None:
         log = self.query_one("#chatlog", RichLog)
@@ -437,11 +438,30 @@ class ChatApp(App[None]):
         self.render_messages()
 
     def feed_reaction(self, message_id: int, reaction: Reaction) -> None:
+        self.feed_reaction_action(message_id, reaction, action="add")
+
+    def feed_reaction_action(self, message_id: int, reaction: Reaction, *, action: str) -> None:
         target = next((m for m in self.state.messages if m.id == message_id), None)
         if not target:
             return
-        target.reactions.append(reaction)
+        if action == "remove":
+            target.reactions = [
+                existing
+                for existing in target.reactions
+                if not (existing.emoji == reaction.emoji and existing.user == reaction.user)
+            ]
+        else:
+            target.reactions.append(reaction)
         self.render_messages()
+
+    def _has_reaction(self, message_id: int, emoji: str) -> bool:
+        target = next((m for m in self.state.messages if m.id == message_id), None)
+        if not target:
+            return False
+        return any(
+            reaction.emoji == emoji and reaction.user == self.state.user
+            for reaction in target.reactions
+        )
 
 
 async def load_username() -> str:
@@ -487,7 +507,13 @@ async def run_client(args: argparse.Namespace) -> None:
         ui = ChatApp(
             state,
             send_callback=lambda text: route_command(websocket, state, text),
-            react_callback=lambda message_id, emoji: send_reaction(websocket, state, message_id, emoji),
+            react_callback=lambda message_id, emoji, remove=False: send_reaction(
+                websocket,
+                state,
+                message_id,
+                emoji,
+                remove=remove,
+            ),
             idle_timeout_seconds=args.idle_timeout,
         )
         listener_task = asyncio.create_task(listen_server(websocket, state, ui))
@@ -521,7 +547,14 @@ async def send_message(websocket, state: ClientState, text: str) -> None:
     await websocket.send(json.dumps(payload))
 
 
-async def send_reaction(websocket, state: ClientState, message_id: int, emoji: str) -> None:
+async def send_reaction(
+    websocket,
+    state: ClientState,
+    message_id: int,
+    emoji: str,
+    *,
+    remove: bool = False,
+) -> None:
     await websocket.send(
         json.dumps(
             {
@@ -529,6 +562,7 @@ async def send_reaction(websocket, state: ClientState, message_id: int, emoji: s
                 "message_id": message_id,
                 "emoji": emoji,
                 "user": state.user,
+                "remove": remove,
             }
         )
     )
@@ -545,7 +579,8 @@ async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
             ui.feed_message(ChatMessage.from_payload(payload["message"]))
         elif msg_type == "reaction":
             reaction = Reaction(**payload["reaction"])
-            ui.feed_reaction(payload["message_id"], reaction)
+            action = payload.get("action", "add")
+            ui.feed_reaction_action(payload["message_id"], reaction, action=action)
 
 
 def parse_args() -> argparse.Namespace:

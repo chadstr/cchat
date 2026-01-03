@@ -79,11 +79,34 @@ class ChatServer:
         message_id = payload.get("message_id")
         emoji = payload.get("emoji")
         user = payload.get("user")
+        remove = payload.get("remove", False)
         if not (message_id and emoji and user):
             return
 
         target = next((m for m in self._messages if m.id == message_id), None)
         if not target:
+            return
+
+        if remove:
+            existing = next(
+                (
+                    reaction
+                    for reaction in target.reactions
+                    if reaction.emoji == emoji and reaction.user == user
+                ),
+                None,
+            )
+            if not existing:
+                return
+            target.reactions.remove(existing)
+            await self._broadcast(
+                {
+                    "type": "reaction",
+                    "message_id": target.id,
+                    "reaction": existing.__dict__,
+                    "action": "remove",
+                }
+            )
             return
 
         reaction = Reaction(emoji=emoji, user=user, timestamp=now_iso())
@@ -93,6 +116,7 @@ class ChatServer:
                 "type": "reaction",
                 "message_id": target.id,
                 "reaction": reaction.__dict__,
+                "action": "add",
             }
         )
 
