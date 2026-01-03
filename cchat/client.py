@@ -225,6 +225,7 @@ class ChatApp(App[None]):
         log.auto_scroll = False
         self.mount(menu)
         menu.styles.offset = (log.region.x + event.x, log.region.y + event.y)
+        self.call_after_refresh(self._position_reaction_menu, menu, log, event)
         self.render_messages()
 
     def dismiss_reaction_menu(self, *, update: bool = True) -> None:
@@ -238,6 +239,19 @@ class ChatApp(App[None]):
         self.update_scroll_state(log)
         if update:
             self.render_messages()
+
+    def _position_reaction_menu(self, menu: ReactionMenu, log: RichLog, event: MouseDown) -> None:
+        if menu is not self._reaction_menu:
+            return
+        screen_width, screen_height = self.screen.size
+        menu_width, menu_height = menu.region.size
+        desired_x = log.region.x + event.x
+        desired_y = log.region.y + event.y
+        max_x = max(0, screen_width - menu_width)
+        max_y = max(0, screen_height - menu_height)
+        clamped_x = max(0, min(desired_x, max_x))
+        clamped_y = max(0, min(desired_y, max_y))
+        menu.styles.offset = (clamped_x, clamped_y)
 
     def send_reaction_from_menu(self, message_id: int, emoji: str) -> None:
         self.dismiss_reaction_menu()
