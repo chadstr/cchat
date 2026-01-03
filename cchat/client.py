@@ -21,7 +21,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.events import Key, MouseDown
 from textual.widget import Widget
-from textual.widgets import Button, Footer, Header, RichLog, TextArea
+from textual.widgets import Button, Footer, Header, Label, RichLog, TextArea
 
 from .crypto import CipherBundle
 from .models import ChatMessage, ISO_FORMAT, Reaction, now_iso
@@ -130,6 +130,12 @@ class ChatApp(App[None]):
         padding: 1 2;
         height: 1fr;
     }
+    #status {
+        height: 1;
+        content-align: center middle;
+        background: #1f2335;
+        color: #9ece6a;
+    }
     #input {
         height: 6;
         border: tall #7aa2f7;
@@ -151,16 +157,19 @@ class ChatApp(App[None]):
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
         self._user_scrolled_up = False
+        self._pending_message_count = 0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield ChatLog(id="chatlog", wrap=True, highlight=False)
+        yield Label("", id="status")
         yield ChatInput(id="input", show_line_numbers=False)
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#input", TextArea).focus()
         self.render_messages()
+        self._update_status_indicator()
 
     def on_mouse_down(self, event: MouseDown) -> None:
         if event.button != 1 or self._reaction_menu is None:
@@ -174,6 +183,7 @@ class ChatApp(App[None]):
     def action_scroll_end(self) -> None:
         self.query_one("#chatlog", RichLog).scroll_end(animate=False)
         self._user_scrolled_up = False
+        self._clear_pending_messages()
 
     def send_from_input(self) -> None:
         input_area = self.query_one("#input", TextArea)
@@ -240,6 +250,7 @@ class ChatApp(App[None]):
             line_index += 1
         if should_autoscroll:
             self.action_scroll_end()
+        self._update_status_indicator()
 
     def _should_autoscroll(self, log: RichLog) -> bool:
         if self._reaction_menu is not None:
@@ -253,6 +264,21 @@ class ChatApp(App[None]):
         max_scroll_y = getattr(log, "max_scroll_y", 0)
         self._user_scrolled_up = log.scroll_y < max_scroll_y
         log.auto_scroll = not self._user_scrolled_up and self._reaction_menu is None
+        if not self._user_scrolled_up:
+            self._clear_pending_messages()
+        self._update_status_indicator()
+
+    def _update_status_indicator(self) -> None:
+        label = self.query_one("#status", Label)
+        if self._pending_message_count > 0:
+            label.update(f"{self._pending_message_count} new message(s)")
+            label.display = True
+        else:
+            label.update("")
+            label.display = False
+
+    def _clear_pending_messages(self) -> None:
+        self._pending_message_count = 0
 
     def _decrypt(self, ciphertext: str) -> str:
         try:
@@ -282,6 +308,9 @@ class ChatApp(App[None]):
         return f"{parsed.day} {parsed.strftime('%b %Y, %I:%M%p')}"
 
     def feed_message(self, message: ChatMessage) -> None:
+        log = self.query_one("#chatlog", RichLog)
+        if message.user != self.state.user and not self._should_autoscroll(log):
+            self._pending_message_count += 1
         self.state.messages.append(message)
         self.render_messages()
 
