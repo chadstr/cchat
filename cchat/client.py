@@ -252,9 +252,9 @@ class ChatApp(App[None]):
             ):
                 line_index = self._render_new_messages_marker(log, line_index)
             align = "right" if msg.user == self.state.user else "left"
-            meta_style = "#9aa5ce" if align == "right" else "#a9b1d6"
+            meta_style = "#b8b8b8"
             body_style = "#9ece6a" if align == "right" else "#7aa2f7"
-            reaction_style = "#f7768e" if align == "right" else "#bb9af7"
+            reaction_style = "#9aa0a6"
             body_text = self._decrypt(msg.ciphertext)
             header_text = f"[{msg.id}] {msg.user} @ {self._format_timestamp(msg.timestamp)}"
             reaction_lines = self._format_reactions(msg.reactions)
@@ -411,7 +411,7 @@ class ChatApp(App[None]):
         for reaction in reactions:
             summary.setdefault(reaction.emoji, []).append(reaction.user)
         parts = [f"{emoji} x{len(users)} ({', '.join(users)})" for emoji, users in summary.items()]
-        return ["Reactions: " + ", ".join(parts)]
+        return [", ".join(parts)]
 
     @staticmethod
     def _format_timestamp(timestamp: str) -> str:
