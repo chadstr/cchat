@@ -252,7 +252,7 @@ class ChatApp(App[None]):
             ):
                 line_index = self._render_new_messages_marker(log, line_index)
             align = "right" if msg.user == self.state.user else "left"
-            meta_style = "#b8b8b8"
+            meta_style = "italic #b8b8b8"
             body_style = "#9ece6a" if align == "right" else "#7aa2f7"
             reaction_style = "#9aa0a6"
             body_text = self._decrypt(msg.ciphertext)
