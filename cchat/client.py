@@ -151,6 +151,15 @@ class ChatApp(App[None]):
         self.query_one("#input", TextArea).focus()
         self.render_messages()
 
+    def on_mouse_down(self, event: MouseDown) -> None:
+        if event.button != 1 or self._reaction_menu is None:
+            return
+        x = getattr(event, "screen_x", event.x)
+        y = getattr(event, "screen_y", event.y)
+        region = self._reaction_menu.region
+        if not (region.x <= x < region.x + region.width and region.y <= y < region.y + region.height):
+            self.dismiss_reaction_menu()
+
     def action_scroll_end(self) -> None:
         self.query_one("#chatlog", RichLog).scroll_end(animate=False)
 
