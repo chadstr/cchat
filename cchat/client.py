@@ -165,7 +165,7 @@ class ChatApp(App[None]):
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+d", "quit", "Quit"),
         ("ctrl+l", "scroll_end", "Bottom"),
-        ("ctrl+r", "reconnect", "Reconnect"),
+        Binding("ctrl+r", "reconnect", "Reconnect", show=False),
     ]
 
     def __init__(
@@ -173,14 +173,14 @@ class ChatApp(App[None]):
         state: ClientState,
         send_callback,
         react_callback,
-        restart_event: asyncio.Event,
+        reconnect_event: asyncio.Event,
         idle_timeout_seconds: int,
     ) -> None:
         super().__init__()
         self.state = state
         self.send_callback = send_callback
         self.react_callback = react_callback
-        self._restart_event = restart_event
+        self._reconnect_event = reconnect_event
         self._idle_timeout = timedelta(seconds=idle_timeout_seconds)
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
@@ -555,15 +555,8 @@ class ChatApp(App[None]):
         if self._connection_ok or self._reconnect_attempted:
             return
         self._reconnect_attempted = True
-        self._restart_event.set()
+        self._reconnect_event.set()
         self.exit()
-
-
-def _restart_args() -> List[str]:
-    spec = globals().get("__spec__")
-    if spec and getattr(spec, "name", None):
-        return [sys.executable, "-m", spec.name, *sys.argv[1:]]
-    return [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
 
     def _has_reaction(self, message_id: int, emoji: str) -> bool:
         target = next((m for m in self.state.messages if m.id == message_id), None)
@@ -573,6 +566,18 @@ def _restart_args() -> List[str]:
             reaction.emoji == emoji and reaction.user == self.state.user
             for reaction in target.reactions
         )
+
+
+def _reconnect_args() -> List[str]:
+    spec = globals().get("__spec__")
+    if spec and getattr(spec, "name", None):
+        return [sys.executable, "-m", spec.name, *sys.argv[1:]]
+    return [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
+
+
+def _reconnect_process() -> None:
+    reconnect_args = _reconnect_args()
+    os.execv(reconnect_args[0], reconnect_args)
 
 
 async def load_username() -> str:
@@ -614,12 +619,7 @@ async def run_client(args: argparse.Namespace) -> None:
         password = getpass("Enter shared password (not stored): ")
         cipher = CipherBundle.from_password(password)
         state = ClientState(user=username, cipher=cipher)
-        restart_args = _restart_args()
-
-        def restart_client() -> None:
-            os.execv(restart_args[0], restart_args)
-
-        restart_event = asyncio.Event()
+        reconnect_event = asyncio.Event()
         ui = ChatApp(
             state,
             send_callback=lambda text: route_command(websocket, state, text),
@@ -630,15 +630,15 @@ async def run_client(args: argparse.Namespace) -> None:
                 emoji,
                 remove=remove,
             ),
-            restart_event=restart_event,
+            reconnect_event=reconnect_event,
             idle_timeout_seconds=args.idle_timeout,
         )
         listener_task = asyncio.create_task(listen_server(websocket, state, ui))
 
         try:
             await ui.run_async()
-            if restart_event.is_set():
-                restart_client()
+            if reconnect_event.is_set():
+                _reconnect_process()
         finally:
             listener_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
