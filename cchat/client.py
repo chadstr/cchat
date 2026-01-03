@@ -109,6 +109,16 @@ class ChatLog(RichLog):
             app.open_reaction_menu(self, event)
             event.stop()
 
+    def on_mouse_scroll_up(self, event) -> None:
+        app = self.app
+        if isinstance(app, ChatApp):
+            app.update_scroll_state(self)
+
+    def on_mouse_scroll_down(self, event) -> None:
+        app = self.app
+        if isinstance(app, ChatApp):
+            app.update_scroll_state(self)
+
 
 class ChatApp(App[None]):
     CSS = """
@@ -140,6 +150,7 @@ class ChatApp(App[None]):
         self.react_callback = react_callback
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
+        self._user_scrolled_up = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -162,6 +173,7 @@ class ChatApp(App[None]):
 
     def action_scroll_end(self) -> None:
         self.query_one("#chatlog", RichLog).scroll_end(animate=False)
+        self._user_scrolled_up = False
 
     def send_from_input(self) -> None:
         input_area = self.query_one("#input", TextArea)
@@ -178,6 +190,7 @@ class ChatApp(App[None]):
         self.dismiss_reaction_menu()
         menu = ReactionMenu(message_id, COMMON_REACTIONS)
         self._reaction_menu = menu
+        log.auto_scroll = False
         self.mount(menu)
         menu.styles.offset = (log.region.x + event.x, log.region.y + event.y)
 
@@ -186,6 +199,8 @@ class ChatApp(App[None]):
             return
         self._reaction_menu.remove()
         self._reaction_menu = None
+        log = self.query_one("#chatlog", RichLog)
+        self.update_scroll_state(log)
 
     def send_reaction_from_menu(self, message_id: int, emoji: str) -> None:
         self.dismiss_reaction_menu()
@@ -193,6 +208,8 @@ class ChatApp(App[None]):
 
     def render_messages(self) -> None:
         log = self.query_one("#chatlog", RichLog)
+        should_autoscroll = self._should_autoscroll(log)
+        log.auto_scroll = should_autoscroll
         log.clear()
         self._line_message_map.clear()
         line_index = 0
@@ -221,7 +238,21 @@ class ChatApp(App[None]):
             log.write(Text(""))
             self._line_message_map[line_index] = msg.id
             line_index += 1
-        self.action_scroll_end()
+        if should_autoscroll:
+            self.action_scroll_end()
+
+    def _should_autoscroll(self, log: RichLog) -> bool:
+        if self._reaction_menu is not None:
+            return False
+        if self._user_scrolled_up:
+            return False
+        max_scroll_y = getattr(log, "max_scroll_y", 0)
+        return log.scroll_y >= max_scroll_y
+
+    def update_scroll_state(self, log: RichLog) -> None:
+        max_scroll_y = getattr(log, "max_scroll_y", 0)
+        self._user_scrolled_up = log.scroll_y < max_scroll_y
+        log.auto_scroll = not self._user_scrolled_up and self._reaction_menu is None
 
     def _decrypt(self, ciphertext: str) -> str:
         try:
