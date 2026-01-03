@@ -128,6 +128,7 @@ class ChatLog(RichLog):
 
 
 class ChatApp(App[None]):
+    TITLE = "CChat"
     CSS = """
     Screen {
         background: #1a1b26;
