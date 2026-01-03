@@ -18,6 +18,7 @@ import websockets
 from rich.align import Align
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.events import Key
 from textual.widgets import Footer, Header, RichLog, TextArea
 
@@ -35,6 +36,10 @@ class ClientState:
 
 
 class ChatInput(TextArea):
+    BINDINGS = [
+        Binding("ctrl+u", "clear_input", "Clear", priority=True),
+    ]
+
     def on_key(self, event: Key) -> None:
         if event.key in {"shift+enter", "ctrl+j"}:
             self.insert("\n")
@@ -48,6 +53,10 @@ class ChatInput(TextArea):
                 event.stop()
                 event.prevent_default()
                 return
+
+    def action_clear_input(self) -> None:
+        self.text = ""
+        self.focus()
 
 
 class ChatApp(App[None]):
@@ -97,6 +106,7 @@ class ChatApp(App[None]):
         input_area.text = ""
         if text:
             asyncio.create_task(self.send_callback(text))
+
 
     def render_messages(self) -> None:
         log = self.query_one("#chatlog", RichLog)
