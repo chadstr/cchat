@@ -591,7 +591,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--idle-timeout",
         type=int,
-        default=30,
+        default=15,
         help="Seconds of inactivity before messages count as unread",
     )
     return parser.parse_args()
