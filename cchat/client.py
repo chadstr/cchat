@@ -36,6 +36,11 @@ class ClientState:
 
 class ChatInput(TextArea):
     def on_key(self, event: Key) -> None:
+        if event.key in {"shift+enter", "ctrl+j"}:
+            self.insert("\n")
+            event.stop()
+            event.prevent_default()
+            return
         if event.key == "enter":
             app = self.app
             if isinstance(app, ChatApp):
@@ -43,10 +48,6 @@ class ChatInput(TextArea):
                 event.stop()
                 event.prevent_default()
                 return
-        if event.key in {"shift+enter", "ctrl+j"}:
-            self.insert("\n")
-            event.stop()
-            event.prevent_default()
 
 
 class ChatApp(App[None]):
