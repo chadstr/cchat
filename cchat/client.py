@@ -29,8 +29,8 @@ from .crypto import CipherBundle
 from .models import ChatMessage, ISO_FORMAT, Reaction, now_iso
 
 CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "cchat" / "config.json"
-COMMON_REACTIONS = ["👍", "❤️", "😂", "🎉", "😮"]
-COMMON_EMOTICONS = ["😀", "😁", "😉", "😅", "😢", "😮", "😛", "❤️"]
+COMMON_REACTIONS = ["👍", "❤️", "😂", "😛", "😍", "😊", "😭", "😮", "😡", "🎉"]
+COMMON_EMOTICONS = ["👍", "❤️", "😂", "😛", "😍", "😊", "😭", "😮", "😡", "🎉"]
 
 
 @dataclass

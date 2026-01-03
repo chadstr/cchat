@@ -9,6 +9,7 @@ clients. TLS keeps the hop between client and server protected.
 - Client-side encryption using a pre-shared password (never written to disk)
 - Terminal UI (Textual): Enter to send, Shift+Enter (or Ctrl+J) for new lines, scrollable history
 - Message reactions via `/react <message_id> <emoji>`
+- Right-click menus for message reactions and input emoticon insertion
 
 ## Getting started
 
@@ -55,6 +56,8 @@ The client workflow:
 - Press **Shift+Enter** (or **Ctrl+J**) to add a new line without sending.
 - Scroll the chat frame with your mouse wheel or PageUp/PageDown.
 - React to a message: `/react <message_id> <emoji>` (e.g. `/react 3 😊`).
+- Right-click a previous message to pick a reaction from the menu.
+- Right-click in the text input to insert a common emoticon.
 
 ## Notes on encryption
 - Messages and reactions are encrypted client-side with a key derived from the
