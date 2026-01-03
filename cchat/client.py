@@ -173,14 +173,14 @@ class ChatApp(App[None]):
         state: ClientState,
         send_callback,
         react_callback,
-        restart_callback,
+        restart_event: asyncio.Event,
         idle_timeout_seconds: int,
     ) -> None:
         super().__init__()
         self.state = state
         self.send_callback = send_callback
         self.react_callback = react_callback
-        self.restart_callback = restart_callback
+        self._restart_event = restart_event
         self._idle_timeout = timedelta(seconds=idle_timeout_seconds)
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
@@ -191,7 +191,6 @@ class ChatApp(App[None]):
         self._last_activity = datetime.now()
         self._connection_ok = True
         self._reconnect_attempted = False
-        self._restart_requested = False
 
     @property
     def connection_ok(self) -> bool:
@@ -556,12 +555,8 @@ class ChatApp(App[None]):
         if self._connection_ok or self._reconnect_attempted:
             return
         self._reconnect_attempted = True
-        self._restart_requested = True
+        self._restart_event.set()
         self.exit()
-
-    @property
-    def restart_requested(self) -> bool:
-        return self._restart_requested
 
 
 def _restart_args() -> List[str]:
@@ -624,6 +619,7 @@ async def run_client(args: argparse.Namespace) -> None:
         def restart_client() -> None:
             os.execv(restart_args[0], restart_args)
 
+        restart_event = asyncio.Event()
         ui = ChatApp(
             state,
             send_callback=lambda text: route_command(websocket, state, text),
@@ -634,14 +630,14 @@ async def run_client(args: argparse.Namespace) -> None:
                 emoji,
                 remove=remove,
             ),
-            restart_callback=restart_client,
+            restart_event=restart_event,
             idle_timeout_seconds=args.idle_timeout,
         )
         listener_task = asyncio.create_task(listen_server(websocket, state, ui))
 
         try:
             await ui.run_async()
-            if ui.restart_requested:
+            if restart_event.is_set():
                 restart_client()
         finally:
             listener_task.cancel()
