@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import json
 import os
+import textwrap
 import ssl
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
@@ -163,6 +164,7 @@ class ChatApp(App[None]):
         self._idle_timeout = timedelta(seconds=idle_timeout_seconds)
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
+        self._selected_message_id: int | None = None
         self._user_scrolled_up = False
         self._pending_message_count = 0
         self._pending_start_index: int | None = None
@@ -210,20 +212,26 @@ class ChatApp(App[None]):
         message_id = self._line_message_map.get(line_index)
         if message_id is None:
             return
-        self.dismiss_reaction_menu()
+        self.dismiss_reaction_menu(update=False)
+        self._selected_message_id = message_id
         menu = ReactionMenu(message_id, COMMON_REACTIONS)
         self._reaction_menu = menu
         log.auto_scroll = False
         self.mount(menu)
         menu.styles.offset = (log.region.x + event.x, log.region.y + event.y)
+        self.render_messages()
 
-    def dismiss_reaction_menu(self) -> None:
-        if self._reaction_menu is None:
+    def dismiss_reaction_menu(self, *, update: bool = True) -> None:
+        if self._reaction_menu is None and self._selected_message_id is None:
             return
-        self._reaction_menu.remove()
+        if self._reaction_menu is not None:
+            self._reaction_menu.remove()
         self._reaction_menu = None
+        self._selected_message_id = None
         log = self.query_one("#chatlog", RichLog)
         self.update_scroll_state(log)
+        if update:
+            self.render_messages()
 
     def send_reaction_from_menu(self, message_id: int, emoji: str) -> None:
         self.dismiss_reaction_menu()
@@ -247,26 +255,39 @@ class ChatApp(App[None]):
             meta_style = "#9aa5ce" if align == "right" else "#a9b1d6"
             body_style = "#9ece6a" if align == "right" else "#7aa2f7"
             reaction_style = "#f7768e" if align == "right" else "#bb9af7"
-            header = Text(
-                f"[{msg.id}] {msg.user} @ {self._format_timestamp(msg.timestamp)}",
-                style=meta_style,
-            )
             body_text = self._decrypt(msg.ciphertext)
-            body = Text(body_text, style=body_style)
-            log.write(Align(header, align=align))
-            log.write(Align(body, align=align))
-            self._line_message_map[line_index] = msg.id
-            body_line_count = body_text.count("\n") + 1
-            for i in range(1, body_line_count + 1):
-                self._line_message_map[line_index + i] = msg.id
-            line_index += 1 + body_line_count
-            for reaction_line in self._format_reactions(msg.reactions):
-                log.write(Align(Text(reaction_line, style=reaction_style), align=align))
+            header_text = f"[{msg.id}] {msg.user} @ {self._format_timestamp(msg.timestamp)}"
+            reaction_lines = self._format_reactions(msg.reactions)
+            if msg.id == self._selected_message_id:
+                line_index = self._render_selected_message(
+                    log=log,
+                    align=align,
+                    header_text=header_text,
+                    body_text=body_text,
+                    reaction_lines=reaction_lines,
+                    meta_style=meta_style,
+                    body_style=body_style,
+                    reaction_style=reaction_style,
+                    line_index=line_index,
+                    message_id=msg.id,
+                )
+            else:
+                header = Text(header_text, style=meta_style)
+                body = Text(body_text, style=body_style)
+                log.write(Align(header, align=align))
+                log.write(Align(body, align=align))
+                self._line_message_map[line_index] = msg.id
+                body_line_count = body_text.count("\n") + 1
+                for i in range(1, body_line_count + 1):
+                    self._line_message_map[line_index + i] = msg.id
+                line_index += 1 + body_line_count
+                for reaction_line in reaction_lines:
+                    log.write(Align(Text(reaction_line, style=reaction_style), align=align))
+                    self._line_message_map[line_index] = msg.id
+                    line_index += 1
+                log.write(Text(""))
                 self._line_message_map[line_index] = msg.id
                 line_index += 1
-            log.write(Text(""))
-            self._line_message_map[line_index] = msg.id
-            line_index += 1
         if should_autoscroll:
             if self._is_idle():
                 log.scroll_end(animate=False)
@@ -278,10 +299,64 @@ class ChatApp(App[None]):
     def _should_autoscroll(self, log: RichLog) -> bool:
         if self._reaction_menu is not None:
             return False
+        if self._selected_message_id is not None:
+            return False
         if self._user_scrolled_up:
             return False
         max_scroll_y = getattr(log, "max_scroll_y", 0)
         return log.scroll_y >= max_scroll_y
+
+    def _render_selected_message(
+        self,
+        *,
+        log: RichLog,
+        align: str,
+        header_text: str,
+        body_text: str,
+        reaction_lines: List[str],
+        meta_style: str,
+        body_style: str,
+        reaction_style: str,
+        line_index: int,
+        message_id: int,
+    ) -> int:
+        lines: List[tuple[str, str]] = [(header_text, meta_style)]
+        body_lines = body_text.splitlines() or [""]
+        lines.extend((line, body_style) for line in body_lines)
+        lines.extend((line, reaction_style) for line in reaction_lines)
+
+        max_line_len = max(len(line) for line, _ in lines) if lines else 1
+        max_inner_width = max(1, log.region.width - 4)
+        inner_width = min(max_line_len, max_inner_width)
+
+        wrapped_lines: List[tuple[str, str]] = []
+        for line, style in lines:
+            wrapped = textwrap.wrap(line, width=inner_width) or [""]
+            for piece in wrapped:
+                wrapped_lines.append((piece, style))
+
+        border_style = "#e0af68"
+        highlight_bg = "#28344a"
+        top = Text("+" + "-" * (inner_width + 2) + "+", style=border_style)
+        log.write(Align(top, align=align))
+        self._line_message_map[line_index] = message_id
+        line_index += 1
+        for line, style in wrapped_lines:
+            content = Text()
+            content.append("| ", style=border_style)
+            content.append(line.ljust(inner_width), style=f"{style} on {highlight_bg}")
+            content.append(" |", style=border_style)
+            log.write(Align(content, align=align))
+            self._line_message_map[line_index] = message_id
+            line_index += 1
+        bottom = Text("+" + "-" * (inner_width + 2) + "+", style=border_style)
+        log.write(Align(bottom, align=align))
+        self._line_message_map[line_index] = message_id
+        line_index += 1
+        log.write(Text(""))
+        self._line_message_map[line_index] = message_id
+        line_index += 1
+        return line_index
 
     def update_scroll_state(self, log: RichLog) -> None:
         max_scroll_y = getattr(log, "max_scroll_y", 0)
