@@ -614,8 +614,8 @@ class ChatApp(App[None]):
         if typing_line:
             lines.append(typing_line)
         if not lines:
-            label.update("")
-            label.display = False
+            label.update(" ")
+            label.display = True
             return
         text = Text()
         for idx, (line, style) in enumerate(lines):
