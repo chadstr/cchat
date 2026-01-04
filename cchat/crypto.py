@@ -17,7 +17,8 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 # A short, fixed salt keeps setup simple for the two-person chat scenario.
 # The password itself remains secret and is never written to disk.
-_DEFAULT_SALT = b"cchat-shared-salt"
+DEFAULT_SALT_TEXT = "cchat-shared-salt"
+_DEFAULT_SALT = DEFAULT_SALT_TEXT.encode("utf-8")
 _ITERATIONS = 390000
 
 

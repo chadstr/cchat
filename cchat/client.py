@@ -25,7 +25,7 @@ from textual.events import Key, MouseDown
 from textual.widget import Widget
 from textual.widgets import Button, Footer, Header, Label, RichLog, TextArea
 
-from .crypto import CipherBundle
+from .crypto import CipherBundle, DEFAULT_SALT_TEXT
 from .models import ChatMessage, ISO_FORMAT, Reaction, now_iso
 
 CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "cchat" / "config.json"
@@ -719,23 +719,60 @@ def _reconnect_process() -> None:
     os.execv(reconnect_args[0], reconnect_args)
 
 
-async def load_username() -> str:
+def _load_config() -> Dict[str, str]:
     if CONFIG_PATH.exists():
         try:
             data = json.loads(CONFIG_PATH.read_text())
-            if username := data.get("username"):
-                return username
+            if isinstance(data, dict):
+                return data
         except Exception:
             pass
-
-    username = input("Enter a display name: ").strip()
-    save_username(username)
-    return username
+    return {}
 
 
-def save_username(username: str) -> None:
+def _save_config(config: Dict[str, str]) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps({"username": username}))
+    CONFIG_PATH.write_text(json.dumps(config))
+
+
+def _prompt_for_salt() -> str:
+    prompt = (
+        "Enter shared salt (random string recommended; must match all clients; "
+        "press Enter for default): "
+    )
+    salt = input(prompt).strip()
+    return salt or DEFAULT_SALT_TEXT
+
+
+async def load_user_settings(preferred_username: str | None) -> tuple[str, str]:
+    config = _load_config()
+    dirty = False
+
+    username = preferred_username or config.get("username")
+    if not isinstance(username, str) or not username.strip():
+        username = input("Enter a display name: ").strip()
+        dirty = True
+
+    if preferred_username and preferred_username != config.get("username"):
+        config["username"] = preferred_username
+        dirty = True
+    elif config.get("username") != username:
+        config["username"] = username
+        dirty = True
+
+    salt = config.get("salt")
+    if not isinstance(salt, str) or not salt.strip():
+        salt = _prompt_for_salt()
+        dirty = True
+
+    if config.get("salt") != salt:
+        config["salt"] = salt
+        dirty = True
+
+    if dirty:
+        _save_config(config)
+
+    return username, salt
 
 
 async def run_client(args: argparse.Namespace) -> None:
@@ -750,13 +787,9 @@ async def run_client(args: argparse.Namespace) -> None:
         await websocket.recv()  # hello
         print("Connected to server. Encryption handshake still local to your password.")
 
-        if args.user:
-            username = args.user
-            save_username(username)
-        else:
-            username = await load_username()
+        username, salt_text = await load_user_settings(args.user)
         password = getpass("Enter shared password (not stored): ")
-        cipher = CipherBundle.from_password(password)
+        cipher = CipherBundle.from_password(password, salt_text.encode("utf-8"))
         state = ClientState(user=username, cipher=cipher)
         reconnect_event = asyncio.Event()
         ui = ChatApp(
