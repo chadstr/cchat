@@ -88,3 +88,7 @@ python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfil
 # Client
 python -m cchat.client --server wss://127.0.0.1:8765 --insecure --user user_one --idle-timeout 5 --show-message-id
 ```
+
+## Security notes
+- Join tokens are sent as an `X-Join-Token` header.
+- Failed join token attempts are rate-limited per IP: 5 failures within 60 seconds.
