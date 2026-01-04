@@ -42,6 +42,8 @@ python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfil
 ```bash
 python -m cchat.client --server wss://<host>:8765 --join-token <token>
 ```
+On first run, the client prompts for the server address and join token and stores
+them in `~/.config/cchat/config.json`.
 For development with a self-signed certificate, keep TLS but skip verification:
 ```bash
 python -m cchat.client --server wss://<host>:8765 --insecure --join-token <token>

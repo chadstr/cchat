@@ -947,7 +947,7 @@ def _reconnect_process() -> None:
     os.execv(reconnect_args[0], reconnect_args)
 
 
-def _load_config() -> Dict[str, str]:
+def _load_config() -> Dict[str, object]:
     if CONFIG_PATH.exists():
         try:
             data = json.loads(CONFIG_PATH.read_text())
@@ -958,7 +958,7 @@ def _load_config() -> Dict[str, str]:
     return {}
 
 
-def _save_config(config: Dict[str, str]) -> None:
+def _save_config(config: Dict[str, object]) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(config))
 
@@ -977,6 +977,31 @@ def _prompt_for_unlock_phrase() -> str:
         phrase = input("Enter unlock phrase (required to unlock idle lock): ").strip()
         if phrase:
             return phrase
+
+
+def _normalize_server_url(value: str) -> str:
+    parsed = urlparse(value)
+    if not parsed.scheme:
+        return f"wss://{value}"
+    return value
+
+
+def _prompt_for_server_url(default_url: str) -> str:
+    while True:
+        raw = input(f"Enter server address (wss://host:port) [{default_url}]: ").strip()
+        if not raw:
+            raw = default_url
+        if raw:
+            return _normalize_server_url(raw)
+        print("Please enter a server address.")
+
+
+def _prompt_for_join_token() -> str:
+    while True:
+        token = input("Enter join token: ").strip()
+        if token:
+            return token
+        print("Join token is required.")
 
 
 def _prompt_for_lock_timeout(default_minutes: int) -> int:
@@ -1048,16 +1073,55 @@ async def load_user_settings(preferred_username: str | None) -> tuple[str, str, 
     return username, salt, unlock_phrase, lock_timeout
 
 
+def load_connection_settings(
+    preferred_server: str | None,
+    preferred_join_token: str | None,
+) -> tuple[str, str]:
+    config = _load_config()
+    dirty = False
+
+    server_url = preferred_server or config.get("server_url")
+    if not isinstance(server_url, str) or not server_url.strip():
+        server_url = _prompt_for_server_url("wss://localhost:8765")
+        dirty = True
+    server_url = _normalize_server_url(server_url)
+
+    if preferred_server and preferred_server != config.get("server_url"):
+        config["server_url"] = server_url
+        dirty = True
+    elif config.get("server_url") != server_url:
+        config["server_url"] = server_url
+        dirty = True
+
+    join_token = preferred_join_token or config.get("join_token")
+    if not isinstance(join_token, str) or not join_token.strip():
+        join_token = _prompt_for_join_token()
+        dirty = True
+
+    if preferred_join_token and preferred_join_token != config.get("join_token"):
+        config["join_token"] = join_token
+        dirty = True
+    elif config.get("join_token") != join_token:
+        config["join_token"] = join_token
+        dirty = True
+
+    if dirty:
+        _save_config(config)
+
+    return server_url, join_token
+
+
 async def run_client(args: argparse.Namespace) -> None:
+    join_token_env = os.environ.get("CCHAT_JOIN_TOKEN")
+    server_url, join_token = load_connection_settings(args.server, args.join_token or join_token_env)
     ssl_context = None
-    if args.server.startswith("wss://"):
+    if server_url.startswith("wss://"):
         ssl_context = ssl.create_default_context()
         if args.insecure:
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
 
-    join_token = args.join_token or os.environ.get("CCHAT_JOIN_TOKEN")
-    server_url = _with_join_token(args.server, join_token)
+    server_url = _with_join_token(server_url, join_token)
     async with websockets.connect(server_url, ssl=ssl_context) as websocket:
         await websocket.recv()  # hello
         print("Connected to server. Encryption handshake still local to your password.")
@@ -1183,7 +1247,7 @@ async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Connect to a cchat server")
-    parser.add_argument("--server", default="wss://localhost:8765", help="WebSocket server URL")
+    parser.add_argument("--server", help="WebSocket server URL")
     parser.add_argument("--user", help="Display name (otherwise remembered from config)")
     parser.add_argument("--insecure", action="store_true", help="Skip SSL verification (development only)")
     parser.add_argument(
