@@ -23,7 +23,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.events import Key, MouseDown
 from textual.widget import Widget
-from textual.widgets import Button, Footer, Header, Label, RichLog, TextArea
+from textual.widgets import Button, Footer, Header, Input, Label, RichLog, TextArea
 
 from .crypto import CipherBundle, DEFAULT_SALT_TEXT
 from .models import ChatMessage, ISO_FORMAT, Reaction, now_iso
@@ -85,26 +85,22 @@ class ChatInput(TextArea):
         self.focus()
 
 
-class UnlockInput(TextArea):
+class UnlockInput(Input):
     BINDINGS = [
         Binding("ctrl+u", "clear_input", "Clear", priority=True),
     ]
 
-    def on_key(self, event: Key) -> None:
+    def __init__(self, *args, **kwargs) -> None:
+        kwargs.setdefault("password", True)
+        super().__init__(*args, **kwargs)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
         app = self.app
         if isinstance(app, ChatApp):
-            if event.key == "enter":
-                app.attempt_unlock(self.text)
-                event.stop()
-                event.prevent_default()
-                return
-            if event.key in {"shift+enter", "ctrl+j"}:
-                event.stop()
-                event.prevent_default()
-                return
+            app.attempt_unlock(self.value)
 
     def action_clear_input(self) -> None:
-        self.text = ""
+        self.value = ""
         self.focus()
 
 
@@ -313,7 +309,7 @@ class ChatApp(App[None]):
         yield Label("Connected: —", id="presence")
         yield ChatLog(id="chatlog", wrap=True, highlight=False)
         yield Label("Locked:", id="lock_label")
-        yield UnlockInput(id="unlock_input", show_line_numbers=False)
+        yield UnlockInput(id="unlock_input")
         yield Label("", id="status")
         yield ChatInput(id="input", show_line_numbers=False)
         yield Footer()
@@ -908,22 +904,22 @@ class ChatApp(App[None]):
         self._apply_lock_state()
 
     def attempt_unlock(self, text: str) -> None:
-        unlock_input = self.query_one("#unlock_input", TextArea)
+        unlock_input = self.query_one("#unlock_input", Input)
         if text == self._unlock_phrase:
             self._locked = False
-            unlock_input.text = ""
+            unlock_input.value = ""
             self._last_activity = datetime.now()
             self._apply_lock_state()
             self.render_messages()
             return
-        unlock_input.text = ""
+        unlock_input.value = ""
         unlock_input.focus()
 
     def _apply_lock_state(self) -> None:
         chatlog = self.query_one("#chatlog", RichLog)
         input_area = self.query_one("#input", TextArea)
         lock_label = self.query_one("#lock_label", Label)
-        unlock_input = self.query_one("#unlock_input", TextArea)
+        unlock_input = self.query_one("#unlock_input", Input)
 
         chatlog.display = not self._locked
         input_area.display = not self._locked
@@ -932,7 +928,7 @@ class ChatApp(App[None]):
         input_area.disabled = self._locked or not self._connection_ok
 
         if self._locked:
-            unlock_input.text = ""
+            unlock_input.value = ""
             unlock_input.focus()
         elif self._connection_ok:
             input_area.focus()
