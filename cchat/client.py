@@ -10,6 +10,7 @@ import os
 import sys
 import textwrap
 import ssl
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from getpass import getpass
@@ -1055,7 +1056,9 @@ async def run_client(args: argparse.Namespace) -> None:
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
 
-    async with websockets.connect(args.server, ssl=ssl_context) as websocket:
+    join_token = args.join_token or os.environ.get("CCHAT_JOIN_TOKEN")
+    server_url = _with_join_token(args.server, join_token)
+    async with websockets.connect(server_url, ssl=ssl_context) as websocket:
         await websocket.recv()  # hello
         print("Connected to server. Encryption handshake still local to your password.")
 
@@ -1184,6 +1187,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user", help="Display name (otherwise remembered from config)")
     parser.add_argument("--insecure", action="store_true", help="Skip SSL verification (development only)")
     parser.add_argument(
+        "--join-token",
+        help="Join token required by the server (or set CCHAT_JOIN_TOKEN)",
+    )
+    parser.add_argument(
         "--idle-timeout",
         type=int,
         default=15,
@@ -1200,6 +1207,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     asyncio.run(run_client(args))
+
+
+def _with_join_token(server_url: str, join_token: str | None) -> str:
+    if not join_token:
+        return server_url
+    parsed = urlparse(server_url)
+    params = dict(parse_qsl(parsed.query))
+    params["token"] = join_token
+    updated = parsed._replace(query=urlencode(params))
+    return urlunparse(updated)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import secrets
 import ssl
+from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 from typing import Dict, List, Set
 
@@ -21,11 +23,12 @@ from .models import ChatMessage, Reaction, now_iso
 
 
 class ChatServer:
-    def __init__(self, history_path: Path | None = None) -> None:
+    def __init__(self, history_path: Path | None = None, *, join_token: str | None = None) -> None:
         self._messages: List[ChatMessage] = []
         self._clients: Set[WebSocketServerProtocol] = set()
         self._next_id = 1
         self._history_path = history_path
+        self._join_token = join_token
         if self._history_path:
             self._load_history()
 
@@ -83,6 +86,9 @@ class ChatServer:
         await self._broadcast_presence()
 
     async def handler(self, websocket: WebSocketServerProtocol) -> None:
+        if not self._authorize_connection(websocket):
+            await websocket.close(code=1008, reason="join token required")
+            return
         await self.register(websocket)
         try:
             async for raw in websocket:
@@ -182,6 +188,23 @@ class ChatServer:
     async def _broadcast_presence(self) -> None:
         await self._broadcast({"type": "presence", "connected_clients": len(self._clients)})
 
+    def _authorize_connection(self, websocket: WebSocketServerProtocol) -> bool:
+        if not self._join_token:
+            return True
+        token = _extract_join_token(websocket.path)
+        return bool(token) and secrets.compare_digest(token, self._join_token)
+
+
+def _extract_join_token(path: str | None) -> str | None:
+    if not path:
+        return None
+    parsed = urlparse(path)
+    params = parse_qs(parsed.query)
+    token = params.get("token", [None])[0]
+    if isinstance(token, str) and token.strip():
+        return token
+    return None
+
 
 def build_ssl_context(certfile: Path | None, keyfile: Path | None) -> ssl.SSLContext | None:
     if not certfile or not keyfile:
@@ -198,6 +221,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--certfile", type=Path, help="Path to TLS certificate (PEM)")
     parser.add_argument("--keyfile", type=Path, help="Path to TLS private key (PEM)")
     parser.add_argument(
+        "--join-token",
+        help="Join token required from clients (generated if omitted)",
+    )
+    parser.add_argument(
         "--history-file",
         type=Path,
         help="Optional path to JSON history file for message retention",
@@ -208,10 +235,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     ssl_context = build_ssl_context(args.certfile, args.keyfile)
-    server = ChatServer(history_path=args.history_file)
+    join_token = args.join_token or secrets.token_urlsafe(32)
+    server = ChatServer(history_path=args.history_file, join_token=join_token)
 
     async def run_server() -> None:
         async with websockets.serve(server.handler, args.host, args.port, ssl=ssl_context):
+            if args.join_token:
+                print("Join token set via --join-token.")
+            else:
+                print(f"Join token: {join_token}")
             print(f"Server running on {'wss' if ssl_context else 'ws'}://{args.host}:{args.port}")
             await asyncio.Future()  # run forever
 

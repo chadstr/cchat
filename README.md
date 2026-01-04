@@ -30,6 +30,7 @@ openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 
 ```bash
 python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key
 ```
+The server prints a join token on startup (or provide your own with `--join-token`).
 If you are tunneling with Cloudflare, point the tunnel at the same host/port.
 To retain message history across restarts, supply a history file path:
 ```bash
@@ -39,14 +40,15 @@ python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfil
 
 ### Run the client
 ```bash
-python -m cchat.client --server wss://<host>:8765
+python -m cchat.client --server wss://<host>:8765 --join-token <token>
 ```
 For development with a self-signed certificate, keep TLS but skip verification:
 ```bash
-python -m cchat.client --server wss://<host>:8765 --insecure
+python -m cchat.client --server wss://<host>:8765 --insecure --join-token <token>
 ```
 Debug options:
 - `--insecure` skips TLS verification (self-signed certs).
+- `--join-token <token>` supplies the join token (or set `CCHAT_JOIN_TOKEN`).
 - `--user <name>` overrides the display name and updates the config.
 - `--idle-timeout <seconds>` sets the inactivity threshold before messages count as unread (default: 15).
 - `--show-message-id` includes message IDs in chat headers for reference.
