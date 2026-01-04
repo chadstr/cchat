@@ -229,7 +229,7 @@ class ChatApp(App[None]):
         color: #7aa2f7;
     }
     #status {
-        height: 2;
+        height: 3;
         content-align: center middle;
         background: #1f2335;
         color: #9ece6a;
