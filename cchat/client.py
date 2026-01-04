@@ -53,6 +53,8 @@ class ChatInput(TextArea):
                 event.stop()
                 event.prevent_default()
                 return
+            if app._is_typing_key(event):
+                app._notify_typing_activity()
         if event.key in {"shift+enter", "ctrl+j"}:
             self.insert("\n")
             event.stop()
@@ -77,6 +79,9 @@ class ChatInput(TextArea):
 
     def action_clear_input(self) -> None:
         self.text = ""
+        app = self.app
+        if isinstance(app, ChatApp):
+            app._set_local_typing(False)
         self.focus()
 
 
@@ -229,6 +234,7 @@ class ChatApp(App[None]):
         state: ClientState,
         send_callback,
         react_callback,
+        typing_callback,
         reconnect_event: asyncio.Event,
         idle_timeout_seconds: int,
         show_message_id: bool,
@@ -251,6 +257,13 @@ class ChatApp(App[None]):
         self._connection_ok = True
         self._reconnect_attempted = False
         self._connected_clients: int | None = None
+        self._typing_users: Dict[str, datetime] = {}
+        self._typing_timeout = timedelta(seconds=5)
+        self._typing_phase = 0
+        self._typing_task: asyncio.Task | None = None
+        self._local_typing_active = False
+        self._last_typing_sent: datetime | None = None
+        self._typing_callback = typing_callback
 
     @property
     def connection_ok(self) -> bool:
@@ -269,6 +282,7 @@ class ChatApp(App[None]):
         self.render_messages()
         self._update_status_indicator()
         self._update_presence_indicator()
+        self.set_interval(0.5, self._tick_typing_indicator)
 
     def on_key(self, event: Key) -> None:
         self._mark_activity()
@@ -299,6 +313,7 @@ class ChatApp(App[None]):
         input_area.text = ""
         if text:
             asyncio.create_task(self.send_callback(text))
+        self._set_local_typing(False)
 
     def open_emoticon_menu(self, input_area: TextArea, event: MouseDown) -> None:
         if self._reaction_menu is not None:
@@ -340,6 +355,7 @@ class ChatApp(App[None]):
         input_area = self.query_one("#input", TextArea)
         input_area.insert(emoticon)
         input_area.focus()
+        self._notify_typing_activity()
 
     def open_reaction_menu(self, log: RichLog, event: MouseDown) -> None:
         line_index = event.y + log.scroll_y
@@ -594,6 +610,9 @@ class ChatApp(App[None]):
             lines.append(("Press Ctrl+R to reconnect", "#c0caf5"))
         if self._pending_message_count > 0:
             lines.append((f"{self._pending_message_count} new message(s)", "#9ece6a"))
+        typing_line = self._format_typing_line()
+        if typing_line:
+            lines.append(typing_line)
         if not lines:
             label.update("")
             label.display = False
@@ -680,6 +699,8 @@ class ChatApp(App[None]):
             self._pending_message_count += 1
             if self._pending_start_index is None:
                 self._pending_start_index = len(self.state.messages)
+        if message.user in self._typing_users:
+            self._typing_users.pop(message.user, None)
         self.state.messages.append(message)
         self.render_messages()
 
@@ -710,6 +731,8 @@ class ChatApp(App[None]):
             input_area.focus()
         if not connected:
             self._connected_clients = None
+            self._typing_users.clear()
+            self._set_local_typing(False)
         self._update_status_indicator()
         self._update_presence_indicator()
 
@@ -734,6 +757,88 @@ class ChatApp(App[None]):
             reaction.emoji == emoji and reaction.user == self.state.user
             for reaction in target.reactions
         )
+
+    @staticmethod
+    def _is_typing_key(event: Key) -> bool:
+        if event.character:
+            return True
+        return event.key in {"backspace", "delete", "ctrl+h", "shift+enter", "ctrl+j"}
+
+    def set_typing_status(self, user: str, typing: bool) -> None:
+        if user == self.state.user:
+            return
+        if typing:
+            self._typing_users[user] = datetime.now()
+        else:
+            self._typing_users.pop(user, None)
+        self._update_status_indicator()
+
+    def _notify_typing_activity(self) -> None:
+        if not self._connection_ok:
+            return
+        now = datetime.now()
+        if not self._local_typing_active:
+            self._local_typing_active = True
+            asyncio.create_task(self._typing_callback(True))
+            self._last_typing_sent = now
+        elif self._last_typing_sent is None or (now - self._last_typing_sent).total_seconds() >= 1:
+            asyncio.create_task(self._typing_callback(True))
+            self._last_typing_sent = now
+        if self._typing_task is not None:
+            self._typing_task.cancel()
+        self._typing_task = asyncio.create_task(self._typing_idle_timeout())
+
+    async def _typing_idle_timeout(self) -> None:
+        try:
+            await asyncio.sleep(self._typing_timeout.total_seconds())
+        except asyncio.CancelledError:
+            return
+        self._set_local_typing(False)
+
+    def _set_local_typing(self, active: bool) -> None:
+        if not self._local_typing_active and not active:
+            return
+        self._local_typing_active = active
+        if self._typing_task is not None:
+            self._typing_task.cancel()
+            self._typing_task = None
+        if not active:
+            self._last_typing_sent = None
+        if self._connection_ok:
+            asyncio.create_task(self._typing_callback(active))
+
+    def _tick_typing_indicator(self) -> None:
+        removed = self._prune_typing_users()
+        if self._typing_users:
+            self._typing_phase = (self._typing_phase + 1) % 3
+            self._update_status_indicator()
+        elif removed:
+            self._typing_phase = 0
+            self._update_status_indicator()
+
+    def _prune_typing_users(self) -> bool:
+        now = datetime.now()
+        expired = [
+            user
+            for user, timestamp in self._typing_users.items()
+            if now - timestamp >= self._typing_timeout
+        ]
+        for user in expired:
+            self._typing_users.pop(user, None)
+        return bool(expired)
+
+    def _format_typing_line(self) -> tuple[str, str] | None:
+        users = [user for user in self._typing_users if user != self.state.user]
+        if not users:
+            return None
+        dots = "." * (self._typing_phase + 1)
+        if len(users) == 1:
+            text = f"{users[0]} is typing {dots}"
+        elif len(users) == 2:
+            text = f"{users[0]} and {users[1]} are typing {dots}"
+        else:
+            text = f"{len(users)} people are typing {dots}"
+        return (text, "#7aa2f7")
 
 
 def _reconnect_args() -> List[str]:
@@ -831,6 +936,7 @@ async def run_client(args: argparse.Namespace) -> None:
                 emoji,
                 remove=remove,
             ),
+            typing_callback=lambda active: send_typing(websocket, state, active),
             reconnect_event=reconnect_event,
             idle_timeout_seconds=args.idle_timeout,
             show_message_id=args.show_message_id,
@@ -889,6 +995,18 @@ async def send_reaction(
     )
 
 
+async def send_typing(websocket, state: ClientState, active: bool) -> None:
+    await websocket.send(
+        json.dumps(
+            {
+                "type": "typing",
+                "user": state.user,
+                "typing": active,
+            }
+        )
+    )
+
+
 async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
     try:
         async for raw in websocket:
@@ -903,6 +1021,11 @@ async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
                 reaction = Reaction(**payload["reaction"])
                 action = payload.get("action", "add")
                 ui.feed_reaction_action(payload["message_id"], reaction, action=action)
+            elif msg_type == "typing":
+                user = payload.get("user")
+                typing = payload.get("typing", False)
+                if isinstance(user, str):
+                    ui.set_typing_status(user, bool(typing))
             elif msg_type == "presence":
                 count = payload.get("connected_clients")
                 ui.set_connected_clients(count if isinstance(count, int) else None)

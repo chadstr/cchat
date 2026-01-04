@@ -96,6 +96,8 @@ class ChatServer:
                     await self._handle_message(websocket, payload)
                 elif msg_type == "reaction":
                     await self._handle_reaction(payload)
+                elif msg_type == "typing":
+                    await self._handle_typing(payload)
         finally:
             await self.unregister(websocket)
 
@@ -163,6 +165,13 @@ class ChatServer:
                 "action": "add",
             }
         )
+
+    async def _handle_typing(self, payload: Dict) -> None:
+        user = payload.get("user")
+        typing = payload.get("typing")
+        if not isinstance(user, str) or not user:
+            return
+        await self._broadcast({"type": "typing", "user": user, "typing": bool(typing)})
 
     async def _broadcast(self, message: Dict) -> None:
         if not self._clients:
