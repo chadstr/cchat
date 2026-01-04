@@ -85,6 +85,29 @@ class ChatInput(TextArea):
         self.focus()
 
 
+class UnlockInput(TextArea):
+    BINDINGS = [
+        Binding("ctrl+u", "clear_input", "Clear", priority=True),
+    ]
+
+    def on_key(self, event: Key) -> None:
+        app = self.app
+        if isinstance(app, ChatApp):
+            if event.key == "enter":
+                app.attempt_unlock(self.text)
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key in {"shift+enter", "ctrl+j"}:
+                event.stop()
+                event.prevent_default()
+                return
+
+    def action_clear_input(self) -> None:
+        self.text = ""
+        self.focus()
+
+
 class ReactionMenu(Widget):
     DEFAULT_CSS = """
     ReactionMenu {
@@ -220,6 +243,17 @@ class ChatApp(App[None]):
         border: tall #7aa2f7;
         padding: 0 1;
     }
+    #lock_label {
+        height: 1fr;
+        content-align: center middle;
+        background: #1f2335;
+        color: #f7768e;
+    }
+    #unlock_input {
+        height: 3;
+        border: tall #f7768e;
+        padding: 0 1;
+    }
     """
 
     BINDINGS = [
@@ -237,6 +271,8 @@ class ChatApp(App[None]):
         typing_callback,
         reconnect_event: asyncio.Event,
         idle_timeout_seconds: int,
+        lock_timeout_seconds: int,
+        unlock_phrase: str,
         show_message_id: bool,
     ) -> None:
         super().__init__()
@@ -245,6 +281,8 @@ class ChatApp(App[None]):
         self.react_callback = react_callback
         self._reconnect_event = reconnect_event
         self._idle_timeout = timedelta(seconds=idle_timeout_seconds)
+        self._lock_timeout = timedelta(seconds=lock_timeout_seconds)
+        self._unlock_phrase = unlock_phrase
         self._show_message_id = show_message_id
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
@@ -254,6 +292,7 @@ class ChatApp(App[None]):
         self._pending_message_count = 0
         self._pending_start_index: int | None = None
         self._last_activity = datetime.now()
+        self._locked = False
         self._connection_ok = True
         self._reconnect_attempted = False
         self._connected_clients: int | None = None
@@ -273,6 +312,8 @@ class ChatApp(App[None]):
         yield Header(show_clock=True)
         yield Label("Connected: —", id="presence")
         yield ChatLog(id="chatlog", wrap=True, highlight=False)
+        yield Label("Locked:", id="lock_label")
+        yield UnlockInput(id="unlock_input", show_line_numbers=False)
         yield Label("", id="status")
         yield ChatInput(id="input", show_line_numbers=False)
         yield Footer()
@@ -282,7 +323,9 @@ class ChatApp(App[None]):
         self.render_messages()
         self._update_status_indicator()
         self._update_presence_indicator()
+        self._apply_lock_state()
         self.set_interval(0.5, self._tick_typing_indicator)
+        self.set_interval(1, self._check_lock_timeout)
 
     def on_key(self, event: Key) -> None:
         self._mark_activity()
@@ -305,7 +348,7 @@ class ChatApp(App[None]):
         self._clear_pending_messages()
 
     def send_from_input(self) -> None:
-        if not self._connection_ok:
+        if self._locked or not self._connection_ok:
             return
         self.dismiss_emoticon_menu()
         input_area = self.query_one("#input", TextArea)
@@ -316,6 +359,8 @@ class ChatApp(App[None]):
         self._set_local_typing(False)
 
     def open_emoticon_menu(self, input_area: TextArea, event: MouseDown) -> None:
+        if self._locked:
+            return
         if self._reaction_menu is not None:
             self.dismiss_reaction_menu(update=False)
             self.render_messages()
@@ -358,6 +403,8 @@ class ChatApp(App[None]):
         self._notify_typing_activity()
 
     def open_reaction_menu(self, log: RichLog, event: MouseDown) -> None:
+        if self._locked:
+            return
         line_index = event.y + log.scroll_y
         message_id = self._line_message_map.get(line_index)
         if message_id is None:
@@ -436,6 +483,9 @@ class ChatApp(App[None]):
         input_area.focus()
 
     def render_messages(self) -> None:
+        if self._locked:
+            self._update_status_indicator()
+            return
         log = self.query_one("#chatlog", RichLog)
         should_autoscroll = self._should_autoscroll(log)
         log.auto_scroll = should_autoscroll
@@ -650,6 +700,8 @@ class ChatApp(App[None]):
         return line_index
 
     def _mark_activity(self) -> None:
+        if self._locked:
+            return
         self._last_activity = datetime.now()
         if not self._user_scrolled_up:
             self._clear_pending_messages()
@@ -726,8 +778,8 @@ class ChatApp(App[None]):
             return
         self._connection_ok = connected
         input_area = self.query_one("#input", TextArea)
-        input_area.disabled = not connected
-        if connected:
+        input_area.disabled = self._locked or not connected
+        if connected and not self._locked:
             input_area.focus()
         if not connected:
             self._connected_clients = None
@@ -840,6 +892,51 @@ class ChatApp(App[None]):
             text = f"{len(users)} people are typing {dots}"
         return (text, "#7aa2f7")
 
+    def _check_lock_timeout(self) -> None:
+        if self._locked or self._lock_timeout.total_seconds() <= 0:
+            return
+        if datetime.now() - self._last_activity >= self._lock_timeout:
+            self._lock()
+
+    def _lock(self) -> None:
+        if self._locked:
+            return
+        self._locked = True
+        self.dismiss_emoticon_menu()
+        self.dismiss_reaction_menu(update=False)
+        self._set_local_typing(False)
+        self._apply_lock_state()
+
+    def attempt_unlock(self, text: str) -> None:
+        unlock_input = self.query_one("#unlock_input", TextArea)
+        if text == self._unlock_phrase:
+            self._locked = False
+            unlock_input.text = ""
+            self._last_activity = datetime.now()
+            self._apply_lock_state()
+            self.render_messages()
+            return
+        unlock_input.text = ""
+        unlock_input.focus()
+
+    def _apply_lock_state(self) -> None:
+        chatlog = self.query_one("#chatlog", RichLog)
+        input_area = self.query_one("#input", TextArea)
+        lock_label = self.query_one("#lock_label", Label)
+        unlock_input = self.query_one("#unlock_input", TextArea)
+
+        chatlog.display = not self._locked
+        input_area.display = not self._locked
+        lock_label.display = self._locked
+        unlock_input.display = self._locked
+        input_area.disabled = self._locked or not self._connection_ok
+
+        if self._locked:
+            unlock_input.text = ""
+            unlock_input.focus()
+        elif self._connection_ok:
+            input_area.focus()
+
 
 def _reconnect_args() -> List[str]:
     spec = globals().get("__spec__")
@@ -878,7 +975,34 @@ def _prompt_for_salt() -> str:
     return salt or DEFAULT_SALT_TEXT
 
 
-async def load_user_settings(preferred_username: str | None) -> tuple[str, str]:
+def _prompt_for_unlock_phrase() -> str:
+    while True:
+        phrase = input("Enter unlock phrase (required to unlock idle lock): ").strip()
+        if phrase:
+            return phrase
+
+
+def _prompt_for_lock_timeout(default_minutes: int) -> int:
+    while True:
+        raw = input(f"Enter lock timeout in minutes [{default_minutes}]: ").strip()
+        if not raw:
+            return default_minutes
+        if raw.isdigit() and int(raw) > 0:
+            return int(raw)
+        print("Please enter a positive number of minutes.")
+
+
+def _coerce_lock_timeout(value) -> int | None:
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        parsed = int(value.strip())
+        if parsed > 0:
+            return parsed
+    return None
+
+
+async def load_user_settings(preferred_username: str | None) -> tuple[str, str, str, int]:
     config = _load_config()
     dirty = False
 
@@ -903,10 +1027,28 @@ async def load_user_settings(preferred_username: str | None) -> tuple[str, str]:
         config["salt"] = salt
         dirty = True
 
+    unlock_phrase = config.get("unlock_phrase")
+    if not isinstance(unlock_phrase, str) or not unlock_phrase.strip():
+        unlock_phrase = _prompt_for_unlock_phrase()
+        dirty = True
+
+    if config.get("unlock_phrase") != unlock_phrase:
+        config["unlock_phrase"] = unlock_phrase
+        dirty = True
+
+    lock_timeout = _coerce_lock_timeout(config.get("lock_timeout_minutes"))
+    if lock_timeout is None:
+        lock_timeout = _prompt_for_lock_timeout(15)
+        dirty = True
+
+    if config.get("lock_timeout_minutes") != lock_timeout:
+        config["lock_timeout_minutes"] = lock_timeout
+        dirty = True
+
     if dirty:
         _save_config(config)
 
-    return username, salt
+    return username, salt, unlock_phrase, lock_timeout
 
 
 async def run_client(args: argparse.Namespace) -> None:
@@ -921,7 +1063,7 @@ async def run_client(args: argparse.Namespace) -> None:
         await websocket.recv()  # hello
         print("Connected to server. Encryption handshake still local to your password.")
 
-        username, salt_text = await load_user_settings(args.user)
+        username, salt_text, unlock_phrase, lock_timeout_minutes = await load_user_settings(args.user)
         password = getpass("Enter shared password (not stored): ")
         cipher = CipherBundle.from_password(password, salt_text.encode("utf-8"))
         state = ClientState(user=username, cipher=cipher)
@@ -939,6 +1081,8 @@ async def run_client(args: argparse.Namespace) -> None:
             typing_callback=lambda active: send_typing(websocket, state, active),
             reconnect_event=reconnect_event,
             idle_timeout_seconds=args.idle_timeout,
+            lock_timeout_seconds=lock_timeout_minutes * 60,
+            unlock_phrase=unlock_phrase,
             show_message_id=args.show_message_id,
         )
         listener_task = asyncio.create_task(listen_server(websocket, state, ui))
