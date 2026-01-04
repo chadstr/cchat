@@ -50,7 +50,7 @@ python -m cchat.client --server wss://<host>:8765 --insecure --join-token <token
 ```
 Debug options:
 - `--insecure` skips TLS verification (self-signed certs).
-- `--join-token <token>` supplies the join token (or set `CCHAT_JOIN_TOKEN`).
+- `--join-token <token>` supplies the join token.
 - `--user <name>` overrides the display name and updates the config.
 - `--idle-timeout <seconds>` sets the inactivity threshold before messages count as unread (default: 15).
 - `--show-message-id` includes message IDs in chat headers for reference.

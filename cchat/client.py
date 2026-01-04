@@ -1112,8 +1112,7 @@ def load_connection_settings(
 
 
 async def run_client(args: argparse.Namespace) -> None:
-    join_token_env = os.environ.get("CCHAT_JOIN_TOKEN")
-    server_url, join_token = load_connection_settings(args.server, args.join_token or join_token_env)
+    server_url, join_token = load_connection_settings(args.server, args.join_token)
     ssl_context = None
     if server_url.startswith("wss://"):
         ssl_context = ssl.create_default_context()
@@ -1252,7 +1251,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--insecure", action="store_true", help="Skip SSL verification (development only)")
     parser.add_argument(
         "--join-token",
-        help="Join token required by the server (or set CCHAT_JOIN_TOKEN)",
+        help="Join token required by the server",
     )
     parser.add_argument(
         "--idle-timeout",
