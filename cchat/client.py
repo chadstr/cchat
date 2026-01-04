@@ -198,6 +198,12 @@ class ChatApp(App[None]):
         padding: 1 2;
         height: 1fr;
     }
+    #presence {
+        height: 1;
+        content-align: center middle;
+        background: #1f2335;
+        color: #7aa2f7;
+    }
     #status {
         height: 2;
         content-align: center middle;
@@ -244,6 +250,7 @@ class ChatApp(App[None]):
         self._last_activity = datetime.now()
         self._connection_ok = True
         self._reconnect_attempted = False
+        self._connected_clients: int | None = None
 
     @property
     def connection_ok(self) -> bool:
@@ -251,6 +258,7 @@ class ChatApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
+        yield Label("Connected: —", id="presence")
         yield ChatLog(id="chatlog", wrap=True, highlight=False)
         yield Label("", id="status")
         yield ChatInput(id="input", show_line_numbers=False)
@@ -260,6 +268,7 @@ class ChatApp(App[None]):
         self.query_one("#input", TextArea).focus()
         self.render_messages()
         self._update_status_indicator()
+        self._update_presence_indicator()
 
     def on_key(self, event: Key) -> None:
         self._mark_activity()
@@ -597,6 +606,17 @@ class ChatApp(App[None]):
         label.update(text)
         label.display = True
 
+    def _update_presence_indicator(self) -> None:
+        label = self.query_one("#presence", Label)
+        if not self._connection_ok:
+            label.update(Text("Connected: —", style="#7aa2f7"))
+            return
+        count = self._connected_clients
+        if count is None:
+            label.update(Text("Connected: —", style="#7aa2f7"))
+            return
+        label.update(Text(f"Connected: {count}", style="#7aa2f7"))
+
     def _clear_pending_messages(self) -> None:
         self._pending_message_count = 0
         self._pending_start_index = None
@@ -688,7 +708,16 @@ class ChatApp(App[None]):
         input_area.disabled = not connected
         if connected:
             input_area.focus()
+        if not connected:
+            self._connected_clients = None
         self._update_status_indicator()
+        self._update_presence_indicator()
+
+    def set_connected_clients(self, count: int | None) -> None:
+        if count is not None and count < 0:
+            return
+        self._connected_clients = count
+        self._update_presence_indicator()
 
     def action_reconnect(self) -> None:
         if self._connection_ok or self._reconnect_attempted:
@@ -874,6 +903,9 @@ async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
                 reaction = Reaction(**payload["reaction"])
                 action = payload.get("action", "add")
                 ui.feed_reaction_action(payload["message_id"], reaction, action=action)
+            elif msg_type == "presence":
+                count = payload.get("connected_clients")
+                ui.set_connected_clients(count if isinstance(count, int) else None)
     except websockets.exceptions.ConnectionClosed:
         ui.set_connection_status(False)
     except Exception:

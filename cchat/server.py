@@ -76,9 +76,11 @@ class ChatServer:
                 }
             )
         )
+        await self._broadcast_presence()
 
-    def unregister(self, websocket: WebSocketServerProtocol) -> None:
+    async def unregister(self, websocket: WebSocketServerProtocol) -> None:
         self._clients.discard(websocket)
+        await self._broadcast_presence()
 
     async def handler(self, websocket: WebSocketServerProtocol) -> None:
         await self.register(websocket)
@@ -95,7 +97,7 @@ class ChatServer:
                 elif msg_type == "reaction":
                     await self._handle_reaction(payload)
         finally:
-            self.unregister(websocket)
+            await self.unregister(websocket)
 
     async def _handle_message(self, websocket: WebSocketServerProtocol, payload: Dict) -> None:
         user = payload.get("user")
@@ -167,6 +169,9 @@ class ChatServer:
             return
         serialized = json.dumps(message)
         await asyncio.gather(*[client.send(serialized) for client in list(self._clients)], return_exceptions=True)
+
+    async def _broadcast_presence(self) -> None:
+        await self._broadcast({"type": "presence", "connected_clients": len(self._clients)})
 
 
 def build_ssl_context(certfile: Path | None, keyfile: Path | None) -> ssl.SSLContext | None:
