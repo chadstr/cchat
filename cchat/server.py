@@ -12,7 +12,6 @@ import asyncio
 import json
 import secrets
 import ssl
-from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 from typing import Dict, List, Set
 
@@ -191,19 +190,10 @@ class ChatServer:
     def _authorize_connection(self, websocket: WebSocketServerProtocol) -> bool:
         if not self._join_token:
             return True
-        token = _extract_join_token(websocket.path)
-        return bool(token) and secrets.compare_digest(token, self._join_token)
-
-
-def _extract_join_token(path: str | None) -> str | None:
-    if not path:
-        return None
-    parsed = urlparse(path)
-    params = parse_qs(parsed.query)
-    token = params.get("token", [None])[0]
-    if isinstance(token, str) and token.strip():
-        return token
-    return None
+        token = websocket.request_headers.get("X-Join-Token")
+        if not isinstance(token, str) or not token.strip():
+            return False
+        return secrets.compare_digest(token.strip(), self._join_token)
 
 
 def build_ssl_context(certfile: Path | None, keyfile: Path | None) -> ssl.SSLContext | None:
