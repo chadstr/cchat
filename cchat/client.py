@@ -496,47 +496,36 @@ class ChatApp(App[None]):
                 and index == self._pending_start_index
             ):
                 line_index = self._render_new_messages_marker(log, line_index)
-            align = "right" if msg.user == self.state.user else "left"
-            meta_style = "italic #b8b8b8"
-            body_style = "#bb9af7" if align == "right" else "#e0af68"
+            is_self = msg.user == self.state.user
+            align = "right" if is_self else "left"
+            meta_style = "italic #a9b1d6"
+            body_style = "#c9c3ff" if is_self else "#f2d9a6"
             reaction_style = "#9aa0a6"
+            bubble_bg = "#2a2740" if is_self else "#2b2a20"
+            border_style = "#7f71c6" if is_self else "#b9a46a"
             body_text = self._decrypt(msg.ciphertext)
             body_lines = self._format_reply_lines(body_text, body_style)
             header_text = self._format_header(msg)
             reaction_lines = self._format_reactions(msg.reactions)
-            if msg.id == self._selected_message_id:
-                line_index = self._render_selected_message(
-                    log=log,
-                    align=align,
-                    header_text=header_text,
-                    body_lines=body_lines,
-                    reaction_lines=reaction_lines,
-                    meta_style=meta_style,
-                    reaction_style=reaction_style,
-                    line_index=line_index,
-                    message_id=msg.id,
-                )
-            else:
-                header = Text(header_text, style=meta_style)
-                body = Text()
-                for idx, (line, style) in enumerate(body_lines):
-                    if idx:
-                        body.append("\n")
-                    body.append(line, style=style)
-                log.write(Align(header, align=align))
-                log.write(Align(body, align=align))
-                self._line_message_map[line_index] = msg.id
-                body_line_count = body_text.count("\n") + 1
-                for i in range(1, body_line_count + 1):
-                    self._line_message_map[line_index + i] = msg.id
-                line_index += 1 + body_line_count
-                for reaction_line in reaction_lines:
-                    log.write(Align(Text(reaction_line, style=reaction_style), align=align))
-                    self._line_message_map[line_index] = msg.id
-                    line_index += 1
-                log.write(Text(""))
-                self._line_message_map[line_index] = msg.id
-                line_index += 1
+            header = Text(header_text, style=meta_style)
+            log.write(Align(header, align=align))
+            self._line_message_map[line_index] = msg.id
+            line_index += 1
+            line_index = self._render_message_bubble(
+                log=log,
+                align=align,
+                body_lines=body_lines,
+                reaction_lines=reaction_lines,
+                reaction_style=reaction_style,
+                bubble_bg=bubble_bg,
+                border_style=border_style,
+                highlight=msg.id == self._selected_message_id,
+                line_index=line_index,
+                message_id=msg.id,
+            )
+            log.write(Text(""))
+            self._line_message_map[line_index] = msg.id
+            line_index += 1
         if should_autoscroll:
             if self._is_idle():
                 log.scroll_end(animate=False)
@@ -555,25 +544,26 @@ class ChatApp(App[None]):
         max_scroll_y = getattr(log, "max_scroll_y", 0)
         return log.scroll_y >= max_scroll_y
 
-    def _render_selected_message(
+    def _render_message_bubble(
         self,
         *,
         log: RichLog,
         align: str,
-        header_text: str,
         body_lines: List[tuple[str, str]],
         reaction_lines: List[str],
-        meta_style: str,
         reaction_style: str,
+        bubble_bg: str,
+        border_style: str,
+        highlight: bool,
         line_index: int,
         message_id: int,
     ) -> int:
-        lines: List[tuple[str, str]] = [(header_text, meta_style)]
+        lines: List[tuple[str, str]] = []
         lines.extend(body_lines)
         lines.extend((line, reaction_style) for line in reaction_lines)
 
         max_line_len = max(len(line) for line, _ in lines) if lines else 1
-        max_inner_width = max(1, log.region.width - 4)
+        max_inner_width = max(1, log.region.width - 6)
         inner_width = min(max_line_len, max_inner_width)
 
         wrapped_lines: List[tuple[str, str]] = []
@@ -582,8 +572,9 @@ class ChatApp(App[None]):
             for piece in wrapped:
                 wrapped_lines.append((piece, style))
 
-        border_style = "#e0af68"
-        highlight_bg = "#28344a"
+        if highlight:
+            border_style = "#7aa2f7"
+            bubble_bg = "#31354b"
         top = Text("+" + "-" * (inner_width + 2) + "+", style=border_style)
         log.write(Align(top, align=align))
         self._line_message_map[line_index] = message_id
@@ -591,7 +582,7 @@ class ChatApp(App[None]):
         for line, style in wrapped_lines:
             content = Text()
             content.append("| ", style=border_style)
-            content.append(line.ljust(inner_width), style=f"{style} on {highlight_bg}")
+            content.append(line.ljust(inner_width), style=f"{style} on {bubble_bg}")
             content.append(" |", style=border_style)
             log.write(Align(content, align=align))
             self._line_message_map[line_index] = message_id
