@@ -1060,7 +1060,7 @@ async def load_user_settings(preferred_username: str | None) -> tuple[str, str, 
 
     lock_timeout = _coerce_lock_timeout(config.get("lock_timeout_minutes"))
     if lock_timeout is None:
-        lock_timeout = _prompt_for_lock_timeout(15)
+        lock_timeout = _prompt_for_lock_timeout(30)
         dirty = True
 
     if config.get("lock_timeout_minutes") != lock_timeout:
