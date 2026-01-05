@@ -503,7 +503,6 @@ class ChatApp(App[None]):
             align = "right" if is_self else "left"
             meta_style = "italic #a9b1d6"
             body_style = "#c9c3ff" if is_self else "#f2d9a6"
-            reaction_style = "#9aa0a6"
             bubble_bg = "#2a2740" if is_self else "#2b2a20"
             border_style = "#7f71c6" if is_self else "#b9a46a"
             body_text = self._decrypt(msg.ciphertext)
@@ -518,11 +517,16 @@ class ChatApp(App[None]):
                 log=log,
                 align=align,
                 body_lines=body_lines,
-                reaction_lines=reaction_lines,
-                reaction_style=reaction_style,
                 bubble_bg=bubble_bg,
                 border_style=border_style,
                 highlight=msg.id == self._selected_message_id,
+                line_index=line_index,
+                message_id=msg.id,
+            )
+            line_index = self._render_reaction_lines(
+                log=log,
+                align=align,
+                reaction_lines=reaction_lines,
                 line_index=line_index,
                 message_id=msg.id,
             )
@@ -553,8 +557,6 @@ class ChatApp(App[None]):
         log: RichLog,
         align: str,
         body_lines: List[tuple[str, str]],
-        reaction_lines: List[str],
-        reaction_style: str,
         bubble_bg: str,
         border_style: str,
         highlight: bool,
@@ -563,7 +565,6 @@ class ChatApp(App[None]):
     ) -> int:
         lines: List[tuple[str, str]] = []
         lines.extend(body_lines)
-        lines.extend((line, reaction_style) for line in reaction_lines)
 
         max_line_len = max(len(line) for line, _ in lines) if lines else 1
         max_inner_width = max(1, log.region.width - 6)
@@ -594,9 +595,26 @@ class ChatApp(App[None]):
         log.write(Align(bottom, align=align))
         self._line_message_map[line_index] = message_id
         line_index += 1
-        log.write(Text(""))
-        self._line_message_map[line_index] = message_id
-        line_index += 1
+        return line_index
+
+    def _render_reaction_lines(
+        self,
+        *,
+        log: RichLog,
+        align: str,
+        reaction_lines: List[Text],
+        line_index: int,
+        message_id: int,
+    ) -> int:
+        if not reaction_lines:
+            return line_index
+        align_width = max(1, log.region.width - 1)
+        for line in reaction_lines:
+            content = Text(" ") if align == "left" else Text()
+            content.append(line)
+            log.write(Align(content, align=align, width=align_width))
+            self._line_message_map[line_index] = message_id
+            line_index += 1
         return line_index
 
     def _format_reply_lines(self, body_text: str, body_style: str) -> List[tuple[str, str]]:
@@ -707,15 +725,24 @@ class ChatApp(App[None]):
         except ValueError:
             return "*** Unable to decrypt: check your password ***"
 
-    @staticmethod
-    def _format_reactions(reactions: List[Reaction]) -> List[str]:
+    def _format_reactions(self, reactions: List[Reaction]) -> List[Text]:
         if not reactions:
             return []
         summary: Dict[str, List[str]] = {}
         for reaction in reactions:
             summary.setdefault(reaction.emoji, []).append(reaction.user)
-        parts = [f"{emoji} x{len(users)} ({', '.join(users)})" for emoji, users in summary.items()]
-        return [", ".join(parts)]
+        line = Text()
+        first = True
+        for emoji, users in summary.items():
+            if not first:
+                line.append(" ")
+            line.append(emoji)
+            line.append(" ")
+            for user in users:
+                star_style = "#bb9af7" if user == self.state.user else "#e0af68"
+                line.append("*", style=star_style)
+            first = False
+        return [line]
 
     def _format_header(self, message: ChatMessage) -> str:
         base = f"{message.user} @ {self._format_timestamp(message.timestamp)}"
