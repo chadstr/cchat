@@ -291,6 +291,7 @@ class ChatApp(App[None]):
         self._last_activity = datetime.now()
         self._locked = False
         self._connection_ok = True
+        self._reconnect_on_unlock = False
         self._connected_clients: int | None = None
         self._typing_users: Dict[str, datetime] = {}
         self._typing_timeout = timedelta(seconds=5)
@@ -702,6 +703,8 @@ class ChatApp(App[None]):
         if not self._connection_ok:
             lines.append(("DISCONNECTED", "#f7768e"))
             lines.append(("Press Ctrl+R to reconnect", "#c0caf5"))
+            if self._locked:
+                lines.append(("Unlock to reconnect", "#c0caf5"))
         if self._pending_message_count > 0:
             lines.append((f"{self._pending_message_count} new message(s)", "#9ece6a"))
         typing_line = self._format_typing_line()
@@ -866,6 +869,8 @@ class ChatApp(App[None]):
         if connected and not self._locked:
             input_area.focus()
         if not connected:
+            if self._locked:
+                self._reconnect_on_unlock = True
             self._connected_clients = None
             self._typing_users.clear()
             self._set_local_typing(False)
@@ -880,6 +885,10 @@ class ChatApp(App[None]):
 
     def action_reconnect(self) -> None:
         if self._connection_ok:
+            return
+        if self._locked:
+            self._reconnect_on_unlock = True
+            self._update_status_indicator()
             return
         self._reconnect_event.set()
         self.exit()
@@ -997,6 +1006,10 @@ class ChatApp(App[None]):
             unlock_input.value = ""
             self._last_activity = datetime.now()
             self._apply_lock_state()
+            if not self._connection_ok and self._reconnect_on_unlock:
+                self._reconnect_on_unlock = False
+                self.action_reconnect()
+                return
             self.render_messages()
             return
         unlock_input.value = ""
