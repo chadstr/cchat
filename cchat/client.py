@@ -7,7 +7,6 @@ import asyncio
 import contextlib
 import json
 import os
-import sys
 import textwrap
 import ssl
 from urllib.parse import urlparse
@@ -292,7 +291,6 @@ class ChatApp(App[None]):
         self._last_activity = datetime.now()
         self._locked = False
         self._connection_ok = True
-        self._reconnect_attempted = False
         self._connected_clients: int | None = None
         self._typing_users: Dict[str, datetime] = {}
         self._typing_timeout = timedelta(seconds=5)
@@ -881,9 +879,8 @@ class ChatApp(App[None]):
         self._update_presence_indicator()
 
     def action_reconnect(self) -> None:
-        if self._connection_ok or self._reconnect_attempted:
+        if self._connection_ok:
             return
-        self._reconnect_attempted = True
         self._reconnect_event.set()
         self.exit()
 
@@ -1022,18 +1019,6 @@ class ChatApp(App[None]):
             unlock_input.focus()
         elif self._connection_ok:
             input_area.focus()
-
-
-def _reconnect_args() -> List[str]:
-    spec = globals().get("__spec__")
-    if spec and getattr(spec, "name", None):
-        return [sys.executable, "-m", spec.name, *sys.argv[1:]]
-    return [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
-
-
-def _reconnect_process() -> None:
-    reconnect_args = _reconnect_args()
-    os.execv(reconnect_args[0], reconnect_args)
 
 
 def _load_config() -> Dict[str, object]:
@@ -1210,13 +1195,46 @@ async def run_client(args: argparse.Namespace) -> None:
             ssl_context.verify_mode = ssl.CERT_NONE
 
     headers = {"X-Join-Token": join_token} if join_token else None
+    username, salt_text, unlock_phrase, lock_timeout_minutes = await load_user_settings(args.user)
+    password = getpass("Enter shared password (not stored): ")
+    cipher = CipherBundle.from_password(password, salt_text.encode("utf-8"))
+
+    while True:
+        try:
+            reconnect = await _run_session(
+                server_url=server_url,
+                ssl_context=ssl_context,
+                headers=headers,
+                username=username,
+                cipher=cipher,
+                unlock_phrase=unlock_phrase,
+                lock_timeout_minutes=lock_timeout_minutes,
+                idle_timeout_seconds=args.idle_timeout,
+                show_message_id=args.show_message_id,
+            )
+        except Exception as exc:
+            print(f"Connection failed: {exc}")
+            reconnect = _prompt_retry_connection()
+        if not reconnect:
+            break
+
+
+async def _run_session(
+    *,
+    server_url: str,
+    ssl_context,
+    headers: Dict[str, str] | None,
+    username: str,
+    cipher: CipherBundle,
+    unlock_phrase: str,
+    lock_timeout_minutes: int,
+    idle_timeout_seconds: int,
+    show_message_id: bool,
+) -> bool:
     async with websockets.connect(server_url, ssl=ssl_context, extra_headers=headers) as websocket:
         await websocket.recv()  # hello
         print("Connected to server. Encryption handshake still local to your password.")
 
-        username, salt_text, unlock_phrase, lock_timeout_minutes = await load_user_settings(args.user)
-        password = getpass("Enter shared password (not stored): ")
-        cipher = CipherBundle.from_password(password, salt_text.encode("utf-8"))
         state = ClientState(user=username, cipher=cipher)
         reconnect_event = asyncio.Event()
         ui = ChatApp(
@@ -1231,21 +1249,29 @@ async def run_client(args: argparse.Namespace) -> None:
             ),
             typing_callback=lambda active: send_typing(websocket, state, active),
             reconnect_event=reconnect_event,
-            idle_timeout_seconds=args.idle_timeout,
+            idle_timeout_seconds=idle_timeout_seconds,
             lock_timeout_seconds=lock_timeout_minutes * 60,
             unlock_phrase=unlock_phrase,
-            show_message_id=args.show_message_id,
+            show_message_id=show_message_id,
         )
         listener_task = asyncio.create_task(listen_server(websocket, state, ui))
 
         try:
             await ui.run_async()
-            if reconnect_event.is_set():
-                _reconnect_process()
+            return reconnect_event.is_set()
         finally:
             listener_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await listener_task
+
+
+def _prompt_retry_connection() -> bool:
+    while True:
+        raw = input("Reconnect failed. Retry? [y/N]: ").strip().lower()
+        if not raw or raw.startswith("n"):
+            return False
+        if raw.startswith("y"):
+            return True
 
 
 async def route_command(websocket, state: ClientState, text: str) -> None:
