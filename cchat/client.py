@@ -11,7 +11,7 @@ import sys
 import textwrap
 import ssl
 from urllib.parse import urlparse
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from dataclasses import dataclass, field
 from getpass import getpass
 from pathlib import Path
@@ -492,6 +492,10 @@ class ChatApp(App[None]):
         log.clear()
         self._line_message_map.clear()
         line_index = 0
+        seen_users: set[str] = set()
+        last_user: str | None = None
+        last_date: date | None = None
+        last_minute: datetime | None = None
         for index, msg in enumerate(self.state.messages):
             if (
                 self._pending_message_count > 0
@@ -507,12 +511,40 @@ class ChatApp(App[None]):
             border_style = "#7f71c6" if is_self else "#b9a46a"
             body_text = self._decrypt(msg.ciphertext)
             body_lines = self._format_reply_lines(body_text, body_style)
-            header_text = self._format_header(msg)
+            parsed = self._parse_timestamp(msg.timestamp)
+            if parsed is None:
+                header_text = self._format_fallback_header(msg)
+                seen_users.add(msg.user)
+                last_user = msg.user
+                last_date = None
+                last_minute = None
+            else:
+                message_date = parsed.date()
+                message_minute = parsed.replace(second=0, microsecond=0)
+                show_username = msg.user not in seen_users
+                show_date = last_date != message_date
+                show_time = (
+                    last_user is None
+                    or msg.user != last_user
+                    or last_minute != message_minute
+                )
+                header_text = self._format_header(
+                    msg,
+                    parsed=parsed,
+                    show_username=show_username,
+                    show_date=show_date,
+                    show_time=show_time,
+                )
+                seen_users.add(msg.user)
+                last_user = msg.user
+                last_date = message_date
+                last_minute = message_minute
             reaction_lines = self._format_reactions(msg.reactions)
-            header = Text(header_text, style=meta_style)
-            log.write(Align(header, align=align))
-            self._line_message_map[line_index] = msg.id
-            line_index += 1
+            if header_text:
+                header = Text(header_text, style=meta_style)
+                log.write(Align(header, align=align))
+                self._line_message_map[line_index] = msg.id
+                line_index += 1
             line_index = self._render_message_bubble(
                 log=log,
                 align=align,
@@ -744,22 +776,51 @@ class ChatApp(App[None]):
             first = False
         return [line]
 
-    def _format_header(self, message: ChatMessage) -> str:
-        base = f"{message.user} @ {self._format_timestamp(message.timestamp)}"
+    def _format_header(
+        self,
+        message: ChatMessage,
+        *,
+        parsed: datetime,
+        show_username: bool,
+        show_date: bool,
+        show_time: bool,
+    ) -> str:
+        parts: List[str] = []
+        if show_date:
+            parts.append(self._format_date(parsed))
+        if show_time:
+            parts.append(self._format_time(parsed))
+        if not parts and not show_username:
+            return ""
+        timestamp_text = ", ".join(parts)
+        header = f"{message.user} @ {timestamp_text}" if show_username else timestamp_text
+        if self._show_message_id and header:
+            return f"[{message.id}] {header}"
+        return header
+
+    @staticmethod
+    def _parse_timestamp(timestamp: str) -> datetime | None:
+        try:
+            return datetime.strptime(timestamp, ISO_FORMAT)
+        except ValueError:
+            try:
+                return datetime.fromisoformat(timestamp)
+            except ValueError:
+                return None
+
+    @staticmethod
+    def _format_date(parsed: datetime) -> str:
+        return f"{parsed.day} {parsed.strftime('%b %Y')}"
+
+    @staticmethod
+    def _format_time(parsed: datetime) -> str:
+        return parsed.strftime("%I:%M%p")
+
+    def _format_fallback_header(self, message: ChatMessage) -> str:
+        base = f"{message.user} @ {message.timestamp}"
         if self._show_message_id:
             return f"[{message.id}] {base}"
         return base
-
-    @staticmethod
-    def _format_timestamp(timestamp: str) -> str:
-        try:
-            parsed = datetime.strptime(timestamp, ISO_FORMAT)
-        except ValueError:
-            try:
-                parsed = datetime.fromisoformat(timestamp)
-            except ValueError:
-                return timestamp
-        return f"{parsed.day} {parsed.strftime('%b %Y, %I:%M%p')}"
 
     def feed_message(self, message: ChatMessage) -> None:
         log = self.query_one("#chatlog", RichLog)
