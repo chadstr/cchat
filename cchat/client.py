@@ -702,9 +702,10 @@ class ChatApp(App[None]):
         lines: List[tuple[str, str]] = []
         if not self._connection_ok:
             lines.append(("DISCONNECTED", "#f7768e"))
-            lines.append(("Press Ctrl+R to reconnect", "#c0caf5"))
             if self._locked:
                 lines.append(("Unlock to reconnect", "#c0caf5"))
+            else:
+                lines.append(("Press Ctrl+R to reconnect", "#c0caf5"))
         if self._pending_message_count > 0:
             lines.append((f"{self._pending_message_count} new message(s)", "#9ece6a"))
         typing_line = self._format_typing_line()
