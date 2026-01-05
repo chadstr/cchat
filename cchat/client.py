@@ -516,8 +516,8 @@ class ChatApp(App[None]):
             is_self = msg.user == self.state.user
             align = "right" if is_self else "left"
             meta_style = "italic #a9b1d6"
-            body_style = "#c9c3ff" if is_self else "#f2d9a6"
-            bubble_bg = "#2a2740" if is_self else "#2b2a20"
+            body_style = "#f0e8ff" if is_self else "#ffd7a6"
+            bubble_bg = "#2e1f4a" if is_self else "#2f1c12"
             body_text = self._decrypt(msg.ciphertext)
             body_lines = self._format_reply_lines(body_text, body_style)
             parsed = self._parse_timestamp(msg.timestamp)
