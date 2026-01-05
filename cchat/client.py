@@ -310,7 +310,7 @@ class ChatApp(App[None]):
         yield Header(show_clock=True)
         yield Label("Connected: —", id="presence")
         yield ChatLog(id="chatlog", wrap=True, highlight=False)
-        yield Label("Locked:", id="lock_label")
+        yield Label("Idle lock", id="lock_label")
         yield UnlockInput(id="unlock_input")
         yield Label("", id="status")
         yield ChatInput(id="input", show_line_numbers=False)
