@@ -62,6 +62,26 @@ The client workflow:
 5. Prompts for the shared password (not stored)
 6. Opens the chat UI
 
+### Optional: shell alias for the client
+You can create a shell alias (or function) that activates the virtualenv and
+runs the client in one command. Add this to your `~/.bashrc` or `~/.zshrc`:
+```bash
+cchat() {
+  source /path/to/cchat/.venv/bin/activate
+  python -m cchat.client "$@"
+}
+```
+Then reload your shell (`source ~/.bashrc` or `source ~/.zshrc`) and run:
+```bash
+cchat --server wss://<host>:8765 --join-token <token>
+```
+`"$@"` forwards any arguments you pass to `cchat` to the client.
+If you have already saved the server and join token in `~/.config/cchat/config.json`,
+you can just run:
+```bash
+cchat
+```
+
 ### Sending messages and reactions
 - Type a message and press **Enter** to send.
 - Press **Shift+Enter** (or **Ctrl+J**) to add a new line without sending.
