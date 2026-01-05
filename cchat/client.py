@@ -554,6 +554,9 @@ class ChatApp(App[None]):
                 log.write(Align(header, align=align))
                 self._line_message_map[line_index] = msg.id
                 line_index += 1
+                log.write(Text(""))
+                self._line_message_map[line_index] = msg.id
+                line_index += 1
             line_index = self._render_message_bubble(
                 log=log,
                 align=align,
