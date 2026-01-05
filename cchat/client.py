@@ -317,7 +317,7 @@ class ChatApp(App[None]):
 
     def on_mount(self) -> None:
         self.query_one("#input", TextArea).focus()
-        self.render_messages()
+        self.call_after_refresh(self.render_messages)
         self._update_status_indicator()
         self._update_presence_indicator()
         self._apply_lock_state()
@@ -484,6 +484,9 @@ class ChatApp(App[None]):
             self._update_status_indicator()
             return
         log = self.query_one("#chatlog", RichLog)
+        if log.region.width <= 1:
+            self.call_after_refresh(self.render_messages)
+            return
         should_autoscroll = self._should_autoscroll(log)
         log.auto_scroll = should_autoscroll
         log.clear()
