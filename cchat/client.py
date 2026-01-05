@@ -256,6 +256,7 @@ class ChatApp(App[None]):
     BINDINGS = [
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+d", "quit", "Quit"),
+        ("ctrl+j", "insert_newline", "New line"),
         ("ctrl+l", "scroll_end", "Bottom"),
         Binding("ctrl+r", "reconnect", "Reconnect", show=False),
     ]
@@ -343,6 +344,15 @@ class ChatApp(App[None]):
         self.query_one("#chatlog", RichLog).scroll_end(animate=False)
         self._user_scrolled_up = False
         self._clear_pending_messages()
+
+    def action_insert_newline(self) -> None:
+        if self._locked or not self._connection_ok:
+            return
+        input_area = self.query_one("#input", TextArea)
+        if input_area.disabled:
+            return
+        input_area.insert("\n")
+        self._notify_typing_activity()
 
     def send_from_input(self) -> None:
         if self._locked or not self._connection_ok:
