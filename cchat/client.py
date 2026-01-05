@@ -502,10 +502,13 @@ class ChatApp(App[None]):
         log.clear()
         self._line_message_map.clear()
         line_index = 0
-        seen_users: set[str] = set()
         last_user: str | None = None
         last_date: date | None = None
         last_minute: datetime | None = None
+        column_state = {
+            "self": {"last_user": None},
+            "other": {"last_user": None},
+        }
         for index, msg in enumerate(self.state.messages):
             if (
                 self._pending_message_count > 0
@@ -520,17 +523,18 @@ class ChatApp(App[None]):
             bubble_bg = "#2e1f4a" if is_self else "#2f1c12"
             body_text = self._decrypt(msg.ciphertext)
             body_lines = self._format_reply_lines(body_text, body_style)
+            column_key = "self" if is_self else "other"
+            state = column_state[column_key]
+            show_username = state["last_user"] is None or msg.user != state["last_user"]
             parsed = self._parse_timestamp(msg.timestamp)
             if parsed is None:
-                header_text = self._format_fallback_header(msg)
-                seen_users.add(msg.user)
+                header_text = self._format_fallback_header(msg, show_username=show_username)
                 last_user = msg.user
                 last_date = None
                 last_minute = None
             else:
                 message_date = parsed.date()
                 message_minute = parsed.replace(second=0, microsecond=0)
-                show_username = msg.user not in seen_users
                 show_date = last_date != message_date
                 show_time = (
                     last_user is None
@@ -544,10 +548,10 @@ class ChatApp(App[None]):
                     show_date=show_date,
                     show_time=show_time,
                 )
-                seen_users.add(msg.user)
                 last_user = msg.user
                 last_date = message_date
                 last_minute = message_minute
+            state["last_user"] = msg.user
             reaction_lines = self._format_reactions(msg.reactions)
             if header_text:
                 header = Text(header_text, style=meta_style)
@@ -817,7 +821,9 @@ class ChatApp(App[None]):
     def _format_time(parsed: datetime) -> str:
         return parsed.strftime("%I:%M%p")
 
-    def _format_fallback_header(self, message: ChatMessage) -> str:
+    def _format_fallback_header(self, message: ChatMessage, *, show_username: bool) -> str:
+        if not show_username:
+            return ""
         base = f"{message.user} @ {message.timestamp}"
         if self._show_message_id:
             return f"[{message.id}] {base}"
