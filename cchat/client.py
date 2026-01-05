@@ -518,7 +518,6 @@ class ChatApp(App[None]):
             meta_style = "italic #a9b1d6"
             body_style = "#c9c3ff" if is_self else "#f2d9a6"
             bubble_bg = "#2a2740" if is_self else "#2b2a20"
-            border_style = "#7f71c6" if is_self else "#b9a46a"
             body_text = self._decrypt(msg.ciphertext)
             body_lines = self._format_reply_lines(body_text, body_style)
             parsed = self._parse_timestamp(msg.timestamp)
@@ -560,7 +559,6 @@ class ChatApp(App[None]):
                 align=align,
                 body_lines=body_lines,
                 bubble_bg=bubble_bg,
-                border_style=border_style,
                 highlight=msg.id == self._selected_message_id,
                 line_index=line_index,
                 message_id=msg.id,
@@ -600,7 +598,6 @@ class ChatApp(App[None]):
         align: str,
         body_lines: List[tuple[str, str]],
         bubble_bg: str,
-        border_style: str,
         highlight: bool,
         line_index: int,
         message_id: int,
@@ -609,7 +606,7 @@ class ChatApp(App[None]):
         lines.extend(body_lines)
 
         max_line_len = max(len(line) for line, _ in lines) if lines else 1
-        max_inner_width = max(1, log.region.width - 6)
+        max_inner_width = max(1, log.region.width - 4)
         inner_width = min(max_line_len, max_inner_width)
 
         wrapped_lines: List[tuple[str, str]] = []
@@ -619,24 +616,15 @@ class ChatApp(App[None]):
                 wrapped_lines.append((piece, style))
 
         if highlight:
-            border_style = "#7aa2f7"
             bubble_bg = "#31354b"
-        top = Text("+" + "-" * (inner_width + 2) + "+", style=border_style)
-        log.write(Align(top, align=align))
-        self._line_message_map[line_index] = message_id
-        line_index += 1
         for line, style in wrapped_lines:
             content = Text()
-            content.append("| ", style=border_style)
+            content.append(" ", style=f"on {bubble_bg}")
             content.append(line.ljust(inner_width), style=f"{style} on {bubble_bg}")
-            content.append(" |", style=border_style)
+            content.append(" ", style=f"on {bubble_bg}")
             log.write(Align(content, align=align))
             self._line_message_map[line_index] = message_id
             line_index += 1
-        bottom = Text("+" + "-" * (inner_width + 2) + "+", style=border_style)
-        log.write(Align(bottom, align=align))
-        self._line_message_map[line_index] = message_id
-        line_index += 1
         return line_index
 
     def _render_reaction_lines(
