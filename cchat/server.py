@@ -12,6 +12,7 @@ import asyncio
 from collections import deque
 from datetime import datetime, timedelta
 import json
+import logging
 import time
 import secrets
 import ssl
@@ -22,6 +23,8 @@ import websockets
 from websockets.server import WebSocketServerProtocol
 
 from .models import ChatMessage, Reaction, now_iso, ISO_FORMAT
+
+logger = logging.getLogger("cchat.server")
 
 
 class ChatServer:
@@ -101,17 +104,23 @@ class ChatServer:
 
     async def handler(self, websocket: WebSocketServerProtocol) -> None:
         host = self._client_host(websocket)
+        logger.info("connection attempt host=%s", host or "unknown")
         if host and self._is_rate_limited(host):
+            logger.warning("connection rate limited host=%s", host)
             await websocket.close(code=1013, reason="try again later")
             return
         if not self._authorize_connection(websocket):
             if host:
                 self._record_auth_failure(host)
+                logger.warning("auth failed host=%s", host)
+            else:
+                logger.warning("auth failed host=unknown")
             await websocket.close(code=1008, reason="join token required")
             return
         if host:
             self._clear_auth_failures(host)
         await self.register(websocket)
+        logger.info("connection accepted host=%s", host or "unknown")
         try:
             async for raw in websocket:
                 try:
@@ -128,6 +137,7 @@ class ChatServer:
                     await self._handle_typing(payload)
         finally:
             await self.unregister(websocket)
+            logger.info("connection closed host=%s", host or "unknown")
 
     async def _handle_message(self, websocket: WebSocketServerProtocol, payload: Dict) -> None:
         user = payload.get("user")
@@ -314,6 +324,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s cchat.server %(message)s",
+    )
     ssl_context = build_ssl_context(args.certfile, args.keyfile)
     join_token = args.join_token or secrets.token_urlsafe(32)
     server = ChatServer(
