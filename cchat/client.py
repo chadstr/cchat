@@ -1073,7 +1073,7 @@ def _prompt_for_salt() -> str:
 
 def _prompt_for_unlock_phrase() -> str:
     while True:
-        phrase = input("Enter unlock phrase (required to unlock idle lock): ").strip()
+        phrase = getpass("Enter unlock phrase (required to unlock idle lock): ").strip()
         if phrase:
             return phrase
 
