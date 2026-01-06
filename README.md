@@ -79,6 +79,14 @@ Notes:
 - If you see idle disconnects, check Cloudflare timeout limits and consider
   periodic keepalives from the client to keep the connection active.
 
+Example firewall setup:
+
+```bash
+# Allow only the local tunnel and SSH, block direct Internet access to the origin.
+sudo ufw allow 22/tcp
+sudo ufw deny 8765/tcp
+```
+
 ### Run the client
 ```bash
 python -m cchat.client --server wss://<host>:8765 --join-token <token>
