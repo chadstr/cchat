@@ -845,7 +845,7 @@ class ChatApp(App[None]):
     def feed_message(self, message: ChatMessage) -> None:
         log = self.query_one("#chatlog", RichLog)
         if message.user != self.state.user and (
-            not self._should_autoscroll(log) or self._is_idle()
+            self._locked or not self._should_autoscroll(log) or self._is_idle()
         ):
             self._pending_message_count += 1
             if self._pending_start_index is None:

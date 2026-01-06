@@ -10,6 +10,7 @@ clients. TLS keeps the hop between client and server protected.
 - Terminal UI (Textual): Enter to send, Shift+Enter (or Ctrl+J) for new lines, scrollable history
 - Message reactions via `/react <message_id> <emoji>`
 - Right-click menus for message reactions and input emoticon insertion
+- Incoming messages while the UI is idle-locked are marked unread immediately
 
 ## Getting started
 
