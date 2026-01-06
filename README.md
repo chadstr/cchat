@@ -120,4 +120,6 @@ python -m cchat.client --server wss://127.0.0.1:8765 --insecure --user user_one 
 
 ## Security notes
 - Join tokens are sent as an `X-Join-Token` header.
-- Failed join token attempts are rate-limited per IP: 5 failures within 60 seconds.
+- Failed join token attempts are logged by the server (look for `auth failed host=...`).
+- If running behind a proxy (for example, Cloudflare Tunnel), logs will show the
+  proxy IP unless you explicitly trust and log a forwarded client IP header.
