@@ -36,6 +36,7 @@ from .models import ChatMessage, ISO_FORMAT, Reaction, now_iso
 CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "cchat" / "config.json"
 COMMON_REACTIONS = ["👍", "❤️", "😂", "😛", "😭", "😮", "😡", "🎉"]
 COMMON_EMOTICONS = ["👍", "❤️", "😂", "😛", "😭", "😮", "😡", "🎉"]
+RECONNECT_DELAYS = [10, 10, 20, 30]
 
 
 @dataclass
@@ -1248,6 +1249,7 @@ async def run_client(args: argparse.Namespace) -> None:
     password = getpass("Enter shared password (not stored): ")
     cipher = CipherBundle.from_password(password, salt_text.encode("utf-8"))
 
+    retry_index = 0
     while True:
         try:
             reconnect = await _run_session(
@@ -1262,9 +1264,16 @@ async def run_client(args: argparse.Namespace) -> None:
                 idle_timeout_seconds=args.idle_timeout,
                 show_message_id=args.show_message_id,
             )
+            retry_index = 0
         except Exception as exc:
             print(f"Connection failed: {exc}")
-            reconnect = _prompt_retry_connection()
+            if retry_index >= len(RECONNECT_DELAYS):
+                break
+            delay = RECONNECT_DELAYS[retry_index]
+            retry_index += 1
+            print(f"Retrying in {delay} seconds...")
+            await asyncio.sleep(delay)
+            reconnect = True
         if not reconnect:
             break
 
@@ -1315,15 +1324,6 @@ async def _run_session(
             listener_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await listener_task
-
-
-def _prompt_retry_connection() -> bool:
-    while True:
-        raw = input("Reconnect failed. Retry? [y/N]: ").strip().lower()
-        if not raw or raw.startswith("n"):
-            return False
-        if raw.startswith("y"):
-            return True
 
 
 async def route_command(websocket, state: ClientState, text: str) -> None:
