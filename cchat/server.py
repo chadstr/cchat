@@ -340,7 +340,7 @@ Notes:
   - --history-window-days limits what new clients receive; it does not delete history.
 """,
     )
-    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
     parser.add_argument("--certfile", type=Path, help="Path to TLS certificate (PEM)")
     parser.add_argument("--keyfile", type=Path, help="Path to TLS private key (PEM)")

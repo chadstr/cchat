@@ -33,6 +33,7 @@ openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 
 python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key
 ```
 The server prints a join token on startup (or provide your own with `--join-token`).
+By default the server binds to `127.0.0.1`; pass `--host 0.0.0.0` to expose it on all interfaces.
 To retain message history across restarts, supply a history file path:
 ```bash
 python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key \
