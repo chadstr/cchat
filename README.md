@@ -38,6 +38,11 @@ To retain message history across restarts, supply a history file path:
 python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key \
   --history-file ./data/history.json
 ```
+To only send recent history to new clients, add a window (rounded to the day boundary):
+```bash
+python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key \
+  --history-file ./data/history.json --history-window-days 3
+```
 
 ### Run the client
 ```bash

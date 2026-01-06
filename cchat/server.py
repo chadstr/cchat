@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections import deque
+from datetime import datetime, timedelta
 import json
 import time
 import secrets
@@ -20,16 +21,23 @@ from typing import Dict, List, Set
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from .models import ChatMessage, Reaction, now_iso
+from .models import ChatMessage, Reaction, now_iso, ISO_FORMAT
 
 
 class ChatServer:
-    def __init__(self, history_path: Path | None = None, *, join_token: str | None = None) -> None:
+    def __init__(
+        self,
+        history_path: Path | None = None,
+        *,
+        join_token: str | None = None,
+        history_window_days: int | None = None,
+    ) -> None:
         self._messages: List[ChatMessage] = []
         self._clients: Set[WebSocketServerProtocol] = set()
         self._next_id = 1
         self._history_path = history_path
         self._join_token = join_token
+        self._history_window_days = history_window_days
         self._auth_failures: Dict[str, deque[float]] = {}
         self._rate_limit_window_seconds = 60.0
         self._rate_limit_max_attempts = 5
@@ -74,12 +82,14 @@ class ChatServer:
 
     async def register(self, websocket: WebSocketServerProtocol) -> None:
         self._clients.add(websocket)
-        await websocket.send(json.dumps({"type": "hello", "message_count": len(self._messages)}))
+        now = datetime.now().astimezone()
+        history_messages = self._filtered_history_messages(now)
+        await websocket.send(json.dumps({"type": "hello", "message_count": len(history_messages)}))
         await websocket.send(
             json.dumps(
                 {
                     "type": "history",
-                    "messages": [message.to_payload() for message in self._messages],
+                    "messages": [message.to_payload() for message in history_messages],
                 }
             )
         )
@@ -200,6 +210,38 @@ class ChatServer:
     async def _broadcast_presence(self) -> None:
         await self._broadcast({"type": "presence", "connected_clients": len(self._clients)})
 
+    def _filtered_history_messages(self, now: datetime) -> List[ChatMessage]:
+        cutoff = self._history_cutoff(now)
+        if cutoff is None:
+            return list(self._messages)
+        filtered: List[ChatMessage] = []
+        for message in self._messages:
+            parsed = self._parse_timestamp(message.timestamp)
+            if parsed is None:
+                filtered.append(message)
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=now.tzinfo)
+            if parsed >= cutoff:
+                filtered.append(message)
+        return filtered
+
+    def _history_cutoff(self, now: datetime) -> datetime | None:
+        if self._history_window_days is None:
+            return None
+        cutoff = now - timedelta(days=self._history_window_days)
+        return cutoff.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    @staticmethod
+    def _parse_timestamp(timestamp: str) -> datetime | None:
+        try:
+            return datetime.strptime(timestamp, ISO_FORMAT)
+        except ValueError:
+            try:
+                return datetime.fromisoformat(timestamp)
+            except ValueError:
+                return None
+
     def _authorize_connection(self, websocket: WebSocketServerProtocol) -> bool:
         if not self._join_token:
             return True
@@ -262,6 +304,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Optional path to JSON history file for message retention",
     )
+    parser.add_argument(
+        "--history-window-days",
+        type=int,
+        help="Only send history from the last N days (rounded to day boundary)",
+    )
     return parser.parse_args()
 
 
@@ -269,7 +316,11 @@ def main() -> None:
     args = parse_args()
     ssl_context = build_ssl_context(args.certfile, args.keyfile)
     join_token = args.join_token or secrets.token_urlsafe(32)
-    server = ChatServer(history_path=args.history_file, join_token=join_token)
+    server = ChatServer(
+        history_path=args.history_file,
+        join_token=join_token,
+        history_window_days=args.history_window_days,
+    )
 
     async def run_server() -> None:
         async with websockets.serve(server.handler, args.host, args.port, ssl=ssl_context):
