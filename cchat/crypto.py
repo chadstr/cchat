@@ -8,6 +8,8 @@ symmetric keys for the duration of the client session.
 from __future__ import annotations
 
 import base64
+import hmac
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -42,6 +44,20 @@ def derive_key(password: str, salt: bytes | None = None) -> bytes:
     )
     key = kdf.derive(password.encode("utf-8"))
     return base64.urlsafe_b64encode(key)
+
+
+def hash_unlock_phrase(phrase: str) -> tuple[str, str]:
+    """Hash an unlock phrase for storage."""
+    salt = os.urandom(16)
+    key = derive_key(phrase, salt)
+    return base64.b64encode(salt).decode("ascii"), key.decode("ascii")
+
+
+def verify_unlock_phrase(phrase: str, salt_b64: str, key_b64: str) -> bool:
+    """Verify an unlock phrase against stored hash material."""
+    salt = base64.b64decode(salt_b64.encode("ascii"))
+    derived = derive_key(phrase, salt).decode("ascii")
+    return hmac.compare_digest(derived, key_b64)
 
 
 @dataclass

@@ -25,7 +25,12 @@ from textual.events import Key, MouseDown
 from textual.widget import Widget
 from textual.widgets import Button, Footer, Header, Input, Label, RichLog, TextArea
 
-from .crypto import CipherBundle, DEFAULT_SALT_TEXT
+from .crypto import (
+    CipherBundle,
+    DEFAULT_SALT_TEXT,
+    hash_unlock_phrase,
+    verify_unlock_phrase,
+)
 from .models import ChatMessage, ISO_FORMAT, Reaction, now_iso
 
 CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "cchat" / "config.json"
@@ -269,7 +274,8 @@ class ChatApp(App[None]):
         reconnect_event: asyncio.Event,
         idle_timeout_seconds: int,
         lock_timeout_seconds: int,
-        unlock_phrase: str,
+        unlock_phrase_hash: str,
+        unlock_phrase_salt: str,
         show_message_id: bool,
     ) -> None:
         super().__init__()
@@ -279,7 +285,8 @@ class ChatApp(App[None]):
         self._reconnect_event = reconnect_event
         self._idle_timeout = timedelta(seconds=idle_timeout_seconds)
         self._lock_timeout = timedelta(seconds=lock_timeout_seconds)
-        self._unlock_phrase = unlock_phrase
+        self._unlock_phrase_hash = unlock_phrase_hash
+        self._unlock_phrase_salt = unlock_phrase_salt
         self._show_message_id = show_message_id
         self._line_message_map: Dict[int, int] = {}
         self._reaction_menu: ReactionMenu | None = None
@@ -1002,7 +1009,7 @@ class ChatApp(App[None]):
 
     def attempt_unlock(self, text: str) -> None:
         unlock_input = self.query_one("#unlock_input", Input)
-        if text == self._unlock_phrase:
+        if verify_unlock_phrase(text, self._unlock_phrase_salt, self._unlock_phrase_hash):
             self._locked = False
             unlock_input.value = ""
             self._last_activity = datetime.now()
@@ -1112,7 +1119,10 @@ def _coerce_lock_timeout(value) -> int | None:
     return None
 
 
-async def load_user_settings(preferred_username: str | None) -> tuple[str, str, str, int]:
+async def load_user_settings(
+    preferred_username: str | None,
+    reset_unlock_phrase: bool,
+) -> tuple[str, str, str, str, int]:
     config = _load_config()
     dirty = False
 
@@ -1137,13 +1147,18 @@ async def load_user_settings(preferred_username: str | None) -> tuple[str, str, 
         config["salt"] = salt
         dirty = True
 
-    unlock_phrase = config.get("unlock_phrase")
-    if not isinstance(unlock_phrase, str) or not unlock_phrase.strip():
-        unlock_phrase = _prompt_for_unlock_phrase()
-        dirty = True
+    unlock_phrase_hash = config.get("unlock_phrase_hash")
+    unlock_phrase_salt = config.get("unlock_phrase_salt")
+    if not isinstance(unlock_phrase_hash, str) or not unlock_phrase_hash.strip():
+        unlock_phrase_hash = ""
+    if not isinstance(unlock_phrase_salt, str) or not unlock_phrase_salt.strip():
+        unlock_phrase_salt = ""
 
-    if config.get("unlock_phrase") != unlock_phrase:
-        config["unlock_phrase"] = unlock_phrase
+    if reset_unlock_phrase or not unlock_phrase_hash or not unlock_phrase_salt:
+        phrase = _prompt_for_unlock_phrase()
+        unlock_phrase_salt, unlock_phrase_hash = hash_unlock_phrase(phrase)
+        config["unlock_phrase_hash"] = unlock_phrase_hash
+        config["unlock_phrase_salt"] = unlock_phrase_salt
         dirty = True
 
     lock_timeout = _coerce_lock_timeout(config.get("lock_timeout_minutes"))
@@ -1158,7 +1173,7 @@ async def load_user_settings(preferred_username: str | None) -> tuple[str, str, 
     if dirty:
         _save_config(config)
 
-    return username, salt, unlock_phrase, lock_timeout
+    return username, salt, unlock_phrase_hash, unlock_phrase_salt, lock_timeout
 
 
 def load_connection_settings(
@@ -1209,7 +1224,9 @@ async def run_client(args: argparse.Namespace) -> None:
             ssl_context.verify_mode = ssl.CERT_NONE
 
     headers = {"X-Join-Token": join_token} if join_token else None
-    username, salt_text, unlock_phrase, lock_timeout_minutes = await load_user_settings(args.user)
+    username, salt_text, unlock_phrase_hash, unlock_phrase_salt, lock_timeout_minutes = (
+        await load_user_settings(args.user, args.reset_unlock_phrase)
+    )
     password = getpass("Enter shared password (not stored): ")
     cipher = CipherBundle.from_password(password, salt_text.encode("utf-8"))
 
@@ -1221,7 +1238,8 @@ async def run_client(args: argparse.Namespace) -> None:
                 headers=headers,
                 username=username,
                 cipher=cipher,
-                unlock_phrase=unlock_phrase,
+                unlock_phrase_hash=unlock_phrase_hash,
+                unlock_phrase_salt=unlock_phrase_salt,
                 lock_timeout_minutes=lock_timeout_minutes,
                 idle_timeout_seconds=args.idle_timeout,
                 show_message_id=args.show_message_id,
@@ -1240,7 +1258,8 @@ async def _run_session(
     headers: Dict[str, str] | None,
     username: str,
     cipher: CipherBundle,
-    unlock_phrase: str,
+    unlock_phrase_hash: str,
+    unlock_phrase_salt: str,
     lock_timeout_minutes: int,
     idle_timeout_seconds: int,
     show_message_id: bool,
@@ -1265,7 +1284,8 @@ async def _run_session(
             reconnect_event=reconnect_event,
             idle_timeout_seconds=idle_timeout_seconds,
             lock_timeout_seconds=lock_timeout_minutes * 60,
-            unlock_phrase=unlock_phrase,
+            unlock_phrase_hash=unlock_phrase_hash,
+            unlock_phrase_salt=unlock_phrase_salt,
             show_message_id=show_message_id,
         )
         listener_task = asyncio.create_task(listen_server(websocket, state, ui))
@@ -1392,6 +1412,11 @@ def parse_args() -> argparse.Namespace:
         "--show-message-id",
         action="store_true",
         help="Show message IDs in chat headers",
+    )
+    parser.add_argument(
+        "--reset-unlock-phrase",
+        action="store_true",
+        help="Prompt for a new idle lock unlock phrase",
     )
     return parser.parse_args()
 

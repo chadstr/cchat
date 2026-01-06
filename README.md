@@ -54,11 +54,12 @@ Debug options:
 - `--user <name>` overrides the display name and updates the config.
 - `--idle-timeout <seconds>` sets the inactivity threshold before messages count as unread (default: 15).
 - `--show-message-id` includes message IDs in chat headers for reference.
+- `--reset-unlock-phrase` prompts for a new idle lock unlock phrase.
 The client workflow:
 1. Connects to the server to verify reachability
 2. Prompts for your display name (stored in `~/.config/cchat/config.json`)
 3. Prompts for a shared salt the first time (stored in `~/.config/cchat/config.json`; random value recommended)
-4. Prompts for an unlock phrase + idle lock timeout the first time (stored in `~/.config/cchat/config.json`)
+4. Prompts for an unlock phrase + idle lock timeout the first time (stored as a salted hash in `~/.config/cchat/config.json`)
 5. Prompts for the shared password (not stored)
 6. Opens the chat UI
 
