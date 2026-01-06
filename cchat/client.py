@@ -1448,7 +1448,7 @@ async def _run_session(
         ping_timeout=10,
     ) as websocket:
         await websocket.recv()  # hello
-        print("Connected to server. Encryption handshake still local to your password.")
+        print("Connected. Your password stays local; the server can't read messages.")
 
         state = ClientState(user=username, cipher=cipher, fingerprint_key=fingerprint_key)
         reconnect_event = asyncio.Event()
