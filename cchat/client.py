@@ -782,7 +782,7 @@ class ChatApp(App[None]):
             header = lines[0].strip("*")
             reply_user = header.split("replying to:", 1)[-1].strip()
             if reply_user:
-                reply_user_style = "#bb9af7" if reply_user == self.state.user else "#e0af68"
+                reply_user_style = "#ffd7a6" if reply_user == self.state.user else "#9ece6a"
             styled_lines.append((header, f"italic {reply_user_style}"))
             lines = lines[1:]
         for line in lines:
