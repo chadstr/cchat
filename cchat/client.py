@@ -1316,7 +1316,13 @@ async def _run_session(
     idle_timeout_seconds: int,
     show_message_id: bool,
 ) -> bool:
-    async with websockets.connect(server_url, ssl=ssl_context, extra_headers=headers) as websocket:
+    async with websockets.connect(
+        server_url,
+        ssl=ssl_context,
+        extra_headers=headers,
+        ping_interval=30,
+        ping_timeout=10,
+    ) as websocket:
         await websocket.recv()  # hello
         print("Connected to server. Encryption handshake still local to your password.")
 
