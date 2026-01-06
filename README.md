@@ -154,3 +154,45 @@ python -m cchat.client --server wss://127.0.0.1:8765 --insecure --user user_one 
   proxy IP unless you explicitly trust and log a forwarded client IP header.
 - Connection logs report the direct peer IP by default; when a trusted local
   tunnel is used, logs report the forwarded client IP headers instead.
+
+## Fail2ban setup (optional)
+Use fail2ban to ban IPs that repeatedly fail join token checks. This setup
+assumes the server logs are written to a file that fail2ban can read.
+
+1) Configure server logging to a file (example using systemd):
+```ini
+[Service]
+ExecStart=/path/to/venv/bin/python -m cchat.server --host 0.0.0.0 --port 8765
+StandardOutput=append:/var/log/cchat/server.log
+StandardError=append:/var/log/cchat/server.log
+```
+
+2) Create a filter at `/etc/fail2ban/filter.d/cchat.conf`:
+```ini
+[Definition]
+failregex = ^.*auth failed host=<HOST>.*$
+ignoreregex =
+```
+
+3) Create a jail at `/etc/fail2ban/jail.d/cchat.conf`:
+```ini
+[cchat]
+enabled = true
+port = 8765
+filter = cchat
+logpath = /var/log/cchat/server.log
+maxretry = 5
+findtime = 600
+bantime = 3600
+```
+
+4) Restart fail2ban and verify:
+```bash
+sudo systemctl restart fail2ban
+sudo fail2ban-client status cchat
+```
+
+Notes:
+- If you are behind Cloudflare Tunnel on the same host, the server logs the
+  real client IP via `CF-Connecting-IP`. If the tunnel runs elsewhere, update
+  the trusted proxy list in `cchat/server.py` or fail2ban will only see proxy IPs.
