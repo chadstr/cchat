@@ -77,8 +77,7 @@ Notes:
   bind the server to localhost or firewall the port so only the tunnel can reach it.
 - If you enable Cloudflare Access, ensure your Access policy allows WebSocket
   traffic and that the client can complete any required authentication flow.
-- If you see idle disconnects, check Cloudflare timeout limits and consider
-  periodic keepalives from the client to keep the connection active.
+- If you see idle disconnects, check Cloudflare timeout limits.
 
 Example firewall setup:
 
@@ -149,8 +148,8 @@ cchat
 - The server stores only ciphertext and forwards it; it cannot decrypt content
   or usernames.
 - TLS secures the hop between client and server (recommended in production).
-- Reaction removal uses a stable fingerprint (HMAC of username keyed by the
-  shared password+salt) so the server can match a second tap to the original
+- Reaction emoji removal uses a stable fingerprint (HMAC of username keyed by the
+  shared password+salt). This is so the server can match a second tap to the original
   reaction even though encrypted usernames are non-deterministic.
 
 ## Debugging
@@ -173,7 +172,7 @@ python -m cchat.client --server wss://127.0.0.1:8765 --insecure --user user_one 
   proxy IP unless you explicitly trust and log a forwarded client IP header.
 - Connection logs report the direct peer IP by default; when a trusted local
   tunnel is used, logs report the forwarded client IP headers instead.
-- Stable reaction fingerprints make reactions linkable across sessions that
+- Stable reaction fingerprints make reactions linkable across chats that
   share the same password+salt; they do not reveal usernames without that secret.
 
 ## Fail2ban setup (optional)
