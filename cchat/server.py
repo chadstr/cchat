@@ -98,7 +98,7 @@ class ChatServer:
         await self._broadcast_presence()
 
     async def handler(self, websocket: WebSocketServerProtocol) -> None:
-        host = self._client_host(websocket)
+        host = self._client_ip(websocket)
         logger.info("connection attempt host=%s", host or "unknown")
         if not self._authorize_connection(websocket):
             if host:
@@ -254,6 +254,30 @@ class ChatServer:
             return str(address[0])
         if isinstance(address, str) and address:
             return address
+        return None
+
+    def _client_ip(self, websocket: WebSocketServerProtocol) -> str | None:
+        host = self._client_host(websocket)
+        if not host:
+            return None
+        if self._is_trusted_proxy(host):
+            forwarded = self._forwarded_client_ip(websocket.request_headers)
+            if forwarded:
+                return forwarded
+        return host
+
+    @staticmethod
+    def _is_trusted_proxy(host: str) -> bool:
+        return host in {"127.0.0.1", "::1"}
+
+    @staticmethod
+    def _forwarded_client_ip(headers: websockets.Headers) -> str | None:
+        cf_ip = headers.get("CF-Connecting-IP")
+        if isinstance(cf_ip, str) and cf_ip.strip():
+            return cf_ip.strip()
+        xff = headers.get("X-Forwarded-For")
+        if isinstance(xff, str) and xff.strip():
+            return xff.split(",")[0].strip()
         return None
 
 

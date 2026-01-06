@@ -32,7 +32,6 @@ openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 
 python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key
 ```
 The server prints a join token on startup (or provide your own with `--join-token`).
-If you are tunneling with Cloudflare, point the tunnel at the same host/port.
 To retain message history across restarts, supply a history file path:
 ```bash
 python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key \
@@ -43,6 +42,34 @@ To only send recent history to new clients, add a window (rounded to the day bou
 python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key \
   --history-file ./data/history.json --history-window-days 3
 ```
+
+### Run behind a Cloudflare Tunnel
+You can expose the server over a Cloudflare Tunnel (cloudflared).
+
+Option A: Cloudflare terminates TLS (origin is plain WS)
+```bash
+python -m cchat.server --host 0.0.0.0 --port 8765
+cloudflared tunnel --url http://localhost:8765
+```
+Client:
+```bash
+python -m cchat.client --server wss://<tunnel-hostname> --join-token <token>
+```
+
+Option B: TLS end-to-end (origin is WSS)
+```bash
+python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key
+cloudflared tunnel --url https://localhost:8765 --no-tls-verify
+```
+Client:
+```bash
+python -m cchat.client --server wss://<tunnel-hostname> --join-token <token>
+```
+Notes:
+- WebSocket traffic is supported automatically by Cloudflare Tunnel.
+- Connection logs show direct peer IPs by default; when the tunnel runs on the
+  same host (loopback), the server trusts `CF-Connecting-IP` and logs the real
+  client IP instead.
 
 ### Run the client
 ```bash
@@ -123,3 +150,5 @@ python -m cchat.client --server wss://127.0.0.1:8765 --insecure --user user_one 
 - Failed join token attempts are logged by the server (look for `auth failed host=...`).
 - If running behind a proxy (for example, Cloudflare Tunnel), logs will show the
   proxy IP unless you explicitly trust and log a forwarded client IP header.
+- Connection logs report the direct peer IP by default; when a trusted local
+  tunnel is used, logs report the forwarded client IP headers instead.
