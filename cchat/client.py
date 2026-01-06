@@ -249,7 +249,7 @@ class ChatLog(RichLog):
 class ChatApp(App[None]):
     TITLE = "CChat"
     STATUS_HEIGHT = 3
-    HOVER_MENU_DELAY = 0.5
+    HOVER_MENU_DELAY = 0.8
     CSS = f"""
     Screen {{
         background: #1a1b26;
