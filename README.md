@@ -1,6 +1,6 @@
 # cchat
 
-Terminal-based chat app with end-to-end encryption for two people. The server
+Terminal-based chat app with end-to-end encryption for small groups (primarily intended for two people). The server
 only relays ciphertext; a shared password encrypts and decrypts messages on the
 clients. TLS keeps the hop between client and server protected.
 

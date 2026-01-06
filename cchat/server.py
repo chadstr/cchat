@@ -307,8 +307,23 @@ def build_ssl_context(certfile: Path | None, keyfile: Path | None) -> ssl.SSLCon
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Start the cchat WebSocket server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+    parser = argparse.ArgumentParser(
+        description="Start the cchat WebSocket server for encrypted relay.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  python -m cchat.server
+  python -m cchat.server --host 0.0.0.0 --port 8765 --join-token <token>
+  python -m cchat.server --certfile server.crt --keyfile server.key
+  python -m cchat.server --history-file ./data/history.json
+  python -m cchat.server --history-file ./data/history.json --history-window-days 7
+
+Notes:
+  - If --join-token is omitted, a token is generated and printed on startup.
+  - TLS is enabled only when both --certfile and --keyfile are provided.
+  - --history-window-days limits what new clients receive; it does not delete history.
+""",
+    )
+    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
     parser.add_argument("--certfile", type=Path, help="Path to TLS certificate (PEM)")
     parser.add_argument("--keyfile", type=Path, help="Path to TLS private key (PEM)")

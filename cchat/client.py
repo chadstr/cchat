@@ -1536,29 +1536,51 @@ async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Connect to a cchat server")
-    parser.add_argument("--server", help="WebSocket server URL")
-    parser.add_argument("--user", help="Display name (otherwise remembered from config)")
-    parser.add_argument("--insecure", action="store_true", help="Skip SSL verification (development only)")
+    parser = argparse.ArgumentParser(
+        description="Connect to a cchat server and open the encrypted chat UI.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent(
+            """\
+            Examples:
+              python -m cchat.client
+              python -m cchat.client --server wss://chat.example.com:8765 --join-token <token>
+              python -m cchat.client --server wss://localhost:8765 --insecure
+              python -m cchat.client --show-message-id
+              python -m cchat.client --user alice --reset-unlock-phrase
+              python -m cchat.client --idle-timeout 60
+            Notes:
+              - Server and join token are saved in ~/.config/cchat/config.json after first run.
+              - Use --show-message-id when you plan to use /react <id> <emoji>.
+              - --reset-unlock-phrase is handy if you forgot it or want to rotate it.
+            """
+        ),
+    )
+    parser.add_argument("--server", help="WebSocket server URL (overrides saved config)")
+    parser.add_argument("--user", help="Display name (saved in config unless already set)")
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Skip TLS verification for self-signed certs (development only)",
+    )
     parser.add_argument(
         "--join-token",
-        help="Join token required by the server",
+        help="Join token required by the server (overrides saved config)",
     )
     parser.add_argument(
         "--idle-timeout",
         type=int,
         default=15,
-        help="Seconds of inactivity before messages count as unread",
+        help="Seconds of inactivity before messages count as unread (default: 15)",
     )
     parser.add_argument(
         "--show-message-id",
         action="store_true",
-        help="Show message IDs in chat headers",
+        help="Show message IDs in chat headers (useful for /react <id> <emoji>)",
     )
     parser.add_argument(
         "--reset-unlock-phrase",
         action="store_true",
-        help="Prompt for a new idle lock unlock phrase",
+        help="Prompt for a new idle lock unlock phrase (useful if forgotten)",
     )
     return parser.parse_args()
 
