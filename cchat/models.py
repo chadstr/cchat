@@ -27,6 +27,7 @@ class ChatMessage:
     ciphertext: str
     timestamp: str
     reactions: List[Reaction] = field(default_factory=list)
+    edited: bool = False
 
     def to_payload(self) -> Dict:
         return {
@@ -35,6 +36,7 @@ class ChatMessage:
             "ciphertext": self.ciphertext,
             "timestamp": self.timestamp,
             "reactions": [r.__dict__ for r in self.reactions],
+            "edited": self.edited,
         }
 
     @classmethod
@@ -46,4 +48,5 @@ class ChatMessage:
             ciphertext=payload["ciphertext"],
             timestamp=payload["timestamp"],
             reactions=reactions,
+            edited=bool(payload.get("edited", False)),
         )

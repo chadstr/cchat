@@ -143,13 +143,16 @@ class ReactionMenu(Widget):
     }
     """
 
-    def __init__(self, message_id: int, emojis: List[str]) -> None:
+    def __init__(self, message_id: int, emojis: List[str], *, allow_edit: bool = False) -> None:
         super().__init__()
         self.message_id = message_id
         self.emojis = emojis
+        self.allow_edit = allow_edit
 
     def compose(self) -> ComposeResult:
         yield Button("Reply to")
+        if self.allow_edit:
+            yield Button("Edit")
         for emoji in self.emojis:
             yield Button(emoji)
 
@@ -159,6 +162,8 @@ class ReactionMenu(Widget):
         if isinstance(app, ChatApp):
             if label == "Reply to":
                 app.reply_to_message_from_menu(self.message_id)
+            elif label == "Edit":
+                app.edit_message_from_menu(self.message_id)
             else:
                 app.send_reaction_from_menu(self.message_id, label)
 
@@ -281,6 +286,7 @@ class ChatApp(App[None]):
         self,
         state: ClientState,
         send_callback,
+        edit_callback,
         react_callback,
         typing_callback,
         reconnect_event: asyncio.Event,
@@ -293,6 +299,7 @@ class ChatApp(App[None]):
         super().__init__()
         self.state = state
         self.send_callback = send_callback
+        self.edit_callback = edit_callback
         self.react_callback = react_callback
         self._reconnect_event = reconnect_event
         self._idle_timeout = timedelta(seconds=idle_timeout_seconds)
@@ -321,6 +328,7 @@ class ChatApp(App[None]):
         self._typing_callback = typing_callback
         self._unlock_attempts = 0
         self._max_unlock_attempts = 5
+        self._editing_message_id: int | None = None
 
     @property
     def connection_ok(self) -> bool:
@@ -384,7 +392,12 @@ class ChatApp(App[None]):
         input_area = self.query_one("#input", TextArea)
         text = input_area.text.rstrip()
         input_area.text = ""
-        if text:
+        if self._editing_message_id is not None:
+            message_id = self._editing_message_id
+            self._editing_message_id = None
+            if text:
+                asyncio.create_task(self.edit_callback(message_id, text))
+        elif text:
             asyncio.create_task(self.send_callback(text))
         self._set_local_typing(False)
 
@@ -439,10 +452,17 @@ class ChatApp(App[None]):
         message_id = self._line_message_map.get(line_index)
         if message_id is None:
             return
+        target = next((m for m in self.state.messages if m.id == message_id), None)
+        if not target:
+            return
         self.dismiss_emoticon_menu()
         self.dismiss_reaction_menu(update=False)
         self._selected_message_id = message_id
-        menu = ReactionMenu(message_id, COMMON_REACTIONS)
+        menu = ReactionMenu(
+            message_id,
+            COMMON_REACTIONS,
+            allow_edit=target.user == self.state.user,
+        )
         self._reaction_menu = menu
         log.auto_scroll = False
         self.mount(menu)
@@ -512,6 +532,17 @@ class ChatApp(App[None]):
         input_area.insert(quote_block)
         input_area.focus()
 
+    def edit_message_from_menu(self, message_id: int) -> None:
+        self.dismiss_reaction_menu()
+        target = next((m for m in self.state.messages if m.id == message_id), None)
+        if not target or target.user != self.state.user:
+            return
+        body_text = self._decrypt(target.ciphertext)
+        input_area = self.query_one("#input", TextArea)
+        input_area.text = body_text
+        input_area.focus()
+        self._editing_message_id = message_id
+
     def render_messages(self) -> None:
         if self._locked:
             self._update_status_indicator()
@@ -551,7 +582,11 @@ class ChatApp(App[None]):
             show_username = state["last_user"] is None or msg.user != state["last_user"]
             parsed = self._parse_timestamp(msg.timestamp)
             if parsed is None:
-                header_text = self._format_fallback_header(msg, show_username=show_username)
+                header_text = self._format_fallback_header(
+                    msg,
+                    show_username=show_username,
+                    edited=msg.edited,
+                )
                 last_user = msg.user
                 last_date = None
                 last_minute = None
@@ -570,6 +605,7 @@ class ChatApp(App[None]):
                     show_username=show_username,
                     show_date=show_date,
                     show_time=show_time,
+                    edited=msg.edited,
                 )
                 last_user = msg.user
                 last_date = message_date
@@ -833,16 +869,22 @@ class ChatApp(App[None]):
         show_username: bool,
         show_date: bool,
         show_time: bool,
+        edited: bool,
     ) -> str:
         parts: List[str] = []
         if show_date:
             parts.append(self._format_date(parsed))
         if show_time:
             parts.append(self._format_time(parsed))
-        if not parts and not show_username:
+        if not parts and not show_username and not edited:
             return ""
         timestamp_text = ", ".join(parts)
         header = f"{message.user} @ {timestamp_text}" if show_username else timestamp_text
+        if edited:
+            if header:
+                header = f"{header} (edited)"
+            else:
+                header = "edited"
         if self._show_message_id and header:
             return f"[{message.id}] {header}"
         return header
@@ -865,10 +907,18 @@ class ChatApp(App[None]):
     def _format_time(parsed: datetime) -> str:
         return parsed.strftime("%I:%M%p")
 
-    def _format_fallback_header(self, message: ChatMessage, *, show_username: bool) -> str:
-        if not show_username:
+    def _format_fallback_header(
+        self,
+        message: ChatMessage,
+        *,
+        show_username: bool,
+        edited: bool,
+    ) -> str:
+        if not show_username and not edited:
             return ""
-        base = f"{message.user} @ {message.timestamp}"
+        base = f"{message.user} @ {message.timestamp}" if show_username else message.timestamp
+        if edited:
+            base = f"{base} (edited)" if base else "edited"
         if self._show_message_id:
             return f"[{message.id}] {base}"
         return base
@@ -884,6 +934,16 @@ class ChatApp(App[None]):
         if message.user in self._typing_users:
             self._typing_users.pop(message.user, None)
         self.state.messages.append(message)
+        self.render_messages()
+
+    def feed_edit(self, message: ChatMessage) -> None:
+        target = next((m for m in self.state.messages if m.id == message.id), None)
+        if not target:
+            return
+        target.ciphertext = message.ciphertext
+        target.timestamp = message.timestamp
+        target.reactions = message.reactions
+        target.edited = message.edited
         self.render_messages()
 
     def feed_reaction(self, message_id: int, reaction: Reaction) -> None:
@@ -1331,6 +1391,7 @@ async def _run_session(
         ui = ChatApp(
             state,
             send_callback=lambda text: route_command(websocket, state, text),
+            edit_callback=lambda message_id, text: send_edit(websocket, state, message_id, text),
             react_callback=lambda message_id, emoji, remove=False: send_reaction(
                 websocket,
                 state,
@@ -1374,6 +1435,14 @@ async def send_message(websocket, state: ClientState, text: str) -> None:
         "user": state.encrypt_username(),
         "ciphertext": state.cipher.encrypt_text(text),
         "timestamp": now_iso(),
+    }
+    await websocket.send(json.dumps(payload))
+
+async def send_edit(websocket, state: ClientState, message_id: int, text: str) -> None:
+    payload = {
+        "type": "edit",
+        "message_id": message_id,
+        "ciphertext": state.cipher.encrypt_text(text),
     }
     await websocket.send(json.dumps(payload))
 
@@ -1440,6 +1509,8 @@ async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
                     ui.feed_message(ChatMessage.from_payload(_decrypt_message_payload(state, message_payload)))
             elif msg_type == "message":
                 ui.feed_message(ChatMessage.from_payload(_decrypt_message_payload(state, payload["message"])))
+            elif msg_type == "edit":
+                ui.feed_edit(ChatMessage.from_payload(_decrypt_message_payload(state, payload["message"])))
             elif msg_type == "reaction":
                 reaction_payload = dict(payload["reaction"])
                 if "user" in reaction_payload:

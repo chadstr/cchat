@@ -119,6 +119,8 @@ class ChatServer:
                 msg_type = payload.get("type")
                 if msg_type == "message":
                     await self._handle_message(websocket, payload)
+                elif msg_type == "edit":
+                    await self._handle_edit(payload)
                 elif msg_type == "reaction":
                     await self._handle_reaction(payload)
                 elif msg_type == "typing":
@@ -191,6 +193,21 @@ class ChatServer:
                 "action": "add",
             }
         )
+
+    async def _handle_edit(self, payload: Dict) -> None:
+        message_id = payload.get("message_id")
+        ciphertext = payload.get("ciphertext")
+        if not (message_id and ciphertext):
+            return
+        if not isinstance(message_id, int):
+            return
+        target = next((m for m in self._messages if m.id == message_id), None)
+        if not target:
+            return
+        target.ciphertext = ciphertext
+        target.edited = True
+        self._save_history()
+        await self._broadcast({"type": "edit", "message": target.to_payload()})
 
     async def _handle_typing(self, payload: Dict) -> None:
         user = payload.get("user")
