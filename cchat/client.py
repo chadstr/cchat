@@ -21,7 +21,7 @@ from rich.align import Align
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.events import Key, MouseDown
+from textual.events import Key, MouseDown, MouseMove
 from textual.widget import Widget
 from textual.widgets import Button, Footer, Header, Input, Label, RichLog, TextArea
 
@@ -212,28 +212,38 @@ class ChatLog(RichLog):
         app = self.app
         if isinstance(app, ChatApp):
             app._mark_activity()
+            app._cancel_hover_menu()
         if event.button != 3:
             return
         if isinstance(app, ChatApp):
             app.open_reaction_menu(self, event)
             event.stop()
 
+    def on_mouse_move(self, event: MouseMove) -> None:
+        app = self.app
+        if isinstance(app, ChatApp):
+            app._mark_activity()
+            app.schedule_hover_reaction_menu(self, event.x, event.y)
+
     def on_mouse_scroll_up(self, event) -> None:
         app = self.app
         if isinstance(app, ChatApp):
             app._mark_activity()
+            app._cancel_hover_menu()
             app.update_scroll_state(self)
 
     def on_mouse_scroll_down(self, event) -> None:
         app = self.app
         if isinstance(app, ChatApp):
             app._mark_activity()
+            app._cancel_hover_menu()
             app.update_scroll_state(self)
 
 
 class ChatApp(App[None]):
     TITLE = "CChat"
     STATUS_HEIGHT = 3
+    HOVER_MENU_DELAY = 0.5
     CSS = f"""
     Screen {{
         background: #1a1b26;
@@ -311,6 +321,8 @@ class ChatApp(App[None]):
         self._reaction_menu: ReactionMenu | None = None
         self._emoticon_menu: EmoticonMenu | None = None
         self._selected_message_id: int | None = None
+        self._hover_task: asyncio.Task | None = None
+        self._hover_target: dict[str, object] | None = None
         self._user_scrolled_up = False
         self._pending_message_count = 0
         self._pending_start_index: int | None = None
@@ -358,6 +370,7 @@ class ChatApp(App[None]):
 
     def on_mouse_down(self, event: MouseDown) -> None:
         self._mark_activity()
+        self._cancel_hover_menu()
         if event.button == 1:
             self._dismiss_menus_if_needed(event)
         if event.button != 1 or self._reaction_menu is None:
@@ -452,23 +465,7 @@ class ChatApp(App[None]):
         message_id = self._line_message_map.get(line_index)
         if message_id is None:
             return
-        target = next((m for m in self.state.messages if m.id == message_id), None)
-        if not target:
-            return
-        self.dismiss_emoticon_menu()
-        self.dismiss_reaction_menu(update=False)
-        self._selected_message_id = message_id
-        menu = ReactionMenu(
-            message_id,
-            COMMON_REACTIONS,
-            allow_edit=target.user == self.state.user,
-        )
-        self._reaction_menu = menu
-        log.auto_scroll = False
-        self.mount(menu)
-        menu.styles.offset = (log.region.x + event.x, log.region.y + event.y)
-        self.call_after_refresh(self._position_reaction_menu, menu, log, event)
-        self.render_messages()
+        self._open_reaction_menu(log, message_id, event.x, event.y)
 
     def dismiss_reaction_menu(self, *, update: bool = True) -> None:
         if self._reaction_menu is None and self._selected_message_id is None:
@@ -481,6 +478,64 @@ class ChatApp(App[None]):
         self.update_scroll_state(log)
         if update:
             self.render_messages()
+
+    def schedule_hover_reaction_menu(self, log: RichLog, x: int, y: int) -> None:
+        if self._locked or self._reaction_menu is not None:
+            return
+        line_index = y + log.scroll_y
+        message_id = self._line_message_map.get(line_index)
+        if message_id is None:
+            self._cancel_hover_menu()
+            return
+        if self._hover_target and self._hover_target.get("message_id") == message_id:
+            self._hover_target["x"] = x
+            self._hover_target["y"] = y
+            return
+        self._cancel_hover_menu()
+        self._hover_target = {"message_id": message_id, "x": x, "y": y, "log": log}
+        self._hover_task = asyncio.create_task(self._open_hover_menu_after_delay())
+
+    def _cancel_hover_menu(self) -> None:
+        if self._hover_task is not None:
+            self._hover_task.cancel()
+            self._hover_task = None
+        self._hover_target = None
+
+    async def _open_hover_menu_after_delay(self) -> None:
+        try:
+            await asyncio.sleep(self.HOVER_MENU_DELAY)
+        except asyncio.CancelledError:
+            return
+        target = self._hover_target
+        self._hover_task = None
+        if not target or self._locked or self._reaction_menu is not None:
+            return
+        message_id = target["message_id"]
+        x = target["x"]
+        y = target["y"]
+        log = target["log"]
+        if isinstance(message_id, int) and isinstance(x, int) and isinstance(y, int):
+            self._open_reaction_menu(log, message_id, x, y)
+
+    def _open_reaction_menu(self, log: RichLog, message_id: int, x: int, y: int) -> None:
+        target = next((m for m in self.state.messages if m.id == message_id), None)
+        if not target:
+            return
+        self._cancel_hover_menu()
+        self.dismiss_emoticon_menu()
+        self.dismiss_reaction_menu(update=False)
+        self._selected_message_id = message_id
+        menu = ReactionMenu(
+            message_id,
+            COMMON_REACTIONS,
+            allow_edit=target.user == self.state.user,
+        )
+        self._reaction_menu = menu
+        log.auto_scroll = False
+        self.mount(menu)
+        menu.styles.offset = (log.region.x + x, log.region.y + y)
+        self.call_after_refresh(self._position_reaction_menu, menu, log, x, y)
+        self.render_messages()
 
     def _dismiss_menus_if_needed(self, event: MouseDown) -> None:
         x = getattr(event, "screen_x", event.x)
@@ -498,13 +553,13 @@ class ChatApp(App[None]):
         if needs_render:
             self.render_messages()
 
-    def _position_reaction_menu(self, menu: ReactionMenu, log: RichLog, event: MouseDown) -> None:
+    def _position_reaction_menu(self, menu: ReactionMenu, log: RichLog, x: int, y: int) -> None:
         if menu is not self._reaction_menu:
             return
         screen_width, screen_height = self.screen.size
         menu_width, menu_height = menu.region.size
-        desired_x = log.region.x + event.x
-        desired_y = log.region.y + event.y
+        desired_x = log.region.x + x
+        desired_y = log.region.y + y
         max_x = max(0, screen_width - menu_width)
         max_y = max(0, screen_height - menu_height)
         clamped_x = max(0, min(desired_x, max_x))
