@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from collections import deque
 from datetime import datetime, timedelta
 import json
 import logging
-import time
 import secrets
 import ssl
 from pathlib import Path
@@ -41,9 +39,6 @@ class ChatServer:
         self._history_path = history_path
         self._join_token = join_token
         self._history_window_days = history_window_days
-        self._auth_failures: Dict[str, deque[float]] = {}
-        self._rate_limit_window_seconds = 60.0
-        self._rate_limit_max_attempts = 5
         if self._history_path:
             self._load_history()
 
@@ -105,20 +100,13 @@ class ChatServer:
     async def handler(self, websocket: WebSocketServerProtocol) -> None:
         host = self._client_host(websocket)
         logger.info("connection attempt host=%s", host or "unknown")
-        if host and self._is_rate_limited(host):
-            logger.warning("connection rate limited host=%s", host)
-            await websocket.close(code=1013, reason="try again later")
-            return
         if not self._authorize_connection(websocket):
             if host:
-                self._record_auth_failure(host)
                 logger.warning("auth failed host=%s", host)
             else:
                 logger.warning("auth failed host=unknown")
             await websocket.close(code=1008, reason="join token required")
             return
-        if host:
-            self._clear_auth_failures(host)
         await self.register(websocket)
         logger.info("connection accepted host=%s", host or "unknown")
         try:
@@ -267,28 +255,6 @@ class ChatServer:
         if isinstance(address, str) and address:
             return address
         return None
-
-    def _record_auth_failure(self, host: str) -> None:
-        now = time.monotonic()
-        failures = self._auth_failures.setdefault(host, deque())
-        failures.append(now)
-        self._prune_failures(failures, now)
-
-    def _clear_auth_failures(self, host: str) -> None:
-        self._auth_failures.pop(host, None)
-
-    def _is_rate_limited(self, host: str) -> bool:
-        failures = self._auth_failures.get(host)
-        if not failures:
-            return False
-        now = time.monotonic()
-        self._prune_failures(failures, now)
-        return len(failures) >= self._rate_limit_max_attempts
-
-    def _prune_failures(self, failures: deque[float], now: float) -> None:
-        cutoff = now - self._rate_limit_window_seconds
-        while failures and failures[0] < cutoff:
-            failures.popleft()
 
 
 def build_ssl_context(certfile: Path | None, keyfile: Path | None) -> ssl.SSLContext | None:
