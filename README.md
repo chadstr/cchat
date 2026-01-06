@@ -72,6 +72,12 @@ Notes:
   client IP instead.
 - If your tunnel runs on another host, add that host's IP to the trusted proxy
   list in `cchat/server.py` so forwarded headers can be used safely.
+- Keep the origin private when Cloudflare terminates TLS at the edge (Option A):
+  bind the server to localhost or firewall the port so only the tunnel can reach it.
+- If you enable Cloudflare Access, ensure your Access policy allows WebSocket
+  traffic and that the client can complete any required authentication flow.
+- If you see idle disconnects, check Cloudflare timeout limits and consider
+  periodic keepalives from the client to keep the connection active.
 
 ### Run the client
 ```bash
