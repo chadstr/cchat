@@ -917,7 +917,7 @@ class ChatApp(App[None]):
             line.append(emoji)
             line.append(" ")
             for user in users:
-                star_style = "#bb9af7" if user == self.state.user else "#e0af68"
+                star_style = "#ffd7a6" if user == self.state.user else "#9ece6a"
                 line.append("*", style=star_style)
             first = False
         return [line]
