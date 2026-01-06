@@ -308,6 +308,8 @@ class ChatApp(App[None]):
         self._local_typing_active = False
         self._last_typing_sent: datetime | None = None
         self._typing_callback = typing_callback
+        self._unlock_attempts = 0
+        self._max_unlock_attempts = 5
 
     @property
     def connection_ok(self) -> bool:
@@ -1006,6 +1008,7 @@ class ChatApp(App[None]):
         if self._locked:
             return
         self._locked = True
+        self._unlock_attempts = 0
         self.dismiss_emoticon_menu()
         self.dismiss_reaction_menu(update=False)
         self._set_local_typing(False)
@@ -1015,6 +1018,7 @@ class ChatApp(App[None]):
         unlock_input = self.query_one("#unlock_input", Input)
         if verify_unlock_phrase(text, self._unlock_phrase_salt, self._unlock_phrase_hash):
             self._locked = False
+            self._unlock_attempts = 0
             unlock_input.value = ""
             self._last_activity = datetime.now()
             self._apply_lock_state()
@@ -1023,6 +1027,10 @@ class ChatApp(App[None]):
                 self.action_reconnect()
                 return
             self.render_messages()
+            return
+        self._unlock_attempts += 1
+        if self._unlock_attempts >= self._max_unlock_attempts:
+            self.exit()
             return
         unlock_input.value = ""
         unlock_input.focus()
