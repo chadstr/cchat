@@ -724,6 +724,9 @@ class ChatApp(App[None]):
         typing_line = self._format_typing_line()
         if typing_line:
             lines.append(typing_line)
+        if self._locked and self._unlock_attempts > 0:
+            remaining = max(self._max_unlock_attempts - self._unlock_attempts, 0)
+            lines.append((f"Unlock attempts remaining: {remaining}", "#c0caf5"))
         if not lines:
             label.update(" ")
             label.display = True
@@ -1013,6 +1016,7 @@ class ChatApp(App[None]):
         self.dismiss_reaction_menu(update=False)
         self._set_local_typing(False)
         self._apply_lock_state()
+        self._update_status_indicator()
 
     def attempt_unlock(self, text: str) -> None:
         unlock_input = self.query_one("#unlock_input", Input)
@@ -1022,6 +1026,7 @@ class ChatApp(App[None]):
             unlock_input.value = ""
             self._last_activity = datetime.now()
             self._apply_lock_state()
+            self._update_status_indicator()
             if not self._connection_ok and self._reconnect_on_unlock:
                 self._reconnect_on_unlock = False
                 self.action_reconnect()
@@ -1029,6 +1034,7 @@ class ChatApp(App[None]):
             self.render_messages()
             return
         self._unlock_attempts += 1
+        self._update_status_indicator()
         if self._unlock_attempts >= self._max_unlock_attempts:
             self.exit()
             return
