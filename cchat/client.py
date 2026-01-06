@@ -28,7 +28,9 @@ from textual.widgets import Button, Footer, Header, Input, Label, RichLog, TextA
 from .crypto import (
     CipherBundle,
     DEFAULT_SALT_TEXT,
+    derive_fingerprint_key,
     hash_unlock_phrase,
+    username_fingerprint,
     verify_unlock_phrase,
 )
 from .models import ChatMessage, ISO_FORMAT, Reaction, now_iso
@@ -43,6 +45,7 @@ RECONNECT_DELAYS = [10, 10, 20, 30]
 class ClientState:
     user: str
     cipher: CipherBundle
+    fingerprint_key: bytes
     messages: List[ChatMessage] = field(default_factory=list)
 
     def encrypt_username(self) -> str:
@@ -53,6 +56,9 @@ class ClientState:
             return self.cipher.decrypt_text(payload_user)
         except ValueError:
             return "*** Unknown user ***"
+
+    def user_fingerprint(self) -> str:
+        return username_fingerprint(self.fingerprint_key, self.user)
 
 
 class ChatInput(TextArea):
@@ -1388,6 +1394,7 @@ async def run_client(args: argparse.Namespace) -> None:
     )
     password = getpass("Enter shared password (not stored): ")
     cipher = CipherBundle.from_password(password, salt_text.encode("utf-8"))
+    fingerprint_key = derive_fingerprint_key(password, salt_text.encode("utf-8"))
 
     retry_index = 0
     while True:
@@ -1398,6 +1405,7 @@ async def run_client(args: argparse.Namespace) -> None:
                 headers=headers,
                 username=username,
                 cipher=cipher,
+                fingerprint_key=fingerprint_key,
                 unlock_phrase_hash=unlock_phrase_hash,
                 unlock_phrase_salt=unlock_phrase_salt,
                 lock_timeout_minutes=lock_timeout_minutes,
@@ -1425,6 +1433,7 @@ async def _run_session(
     headers: Dict[str, str] | None,
     username: str,
     cipher: CipherBundle,
+    fingerprint_key: bytes,
     unlock_phrase_hash: str,
     unlock_phrase_salt: str,
     lock_timeout_minutes: int,
@@ -1441,7 +1450,7 @@ async def _run_session(
         await websocket.recv()  # hello
         print("Connected to server. Encryption handshake still local to your password.")
 
-        state = ClientState(user=username, cipher=cipher)
+        state = ClientState(user=username, cipher=cipher, fingerprint_key=fingerprint_key)
         reconnect_event = asyncio.Event()
         ui = ChatApp(
             state,
@@ -1517,6 +1526,7 @@ async def send_reaction(
                 "message_id": message_id,
                 "emoji": emoji,
                 "user": state.encrypt_username(),
+                "user_fingerprint": state.user_fingerprint(),
                 "remove": remove,
             }
         )

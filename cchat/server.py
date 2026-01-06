@@ -151,6 +151,7 @@ class ChatServer:
         message_id = payload.get("message_id")
         emoji = payload.get("emoji")
         user = payload.get("user")
+        user_fingerprint = payload.get("user_fingerprint")
         remove = payload.get("remove", False)
         if not (message_id and emoji and user):
             return
@@ -160,14 +161,25 @@ class ChatServer:
             return
 
         if remove:
-            existing = next(
-                (
-                    reaction
-                    for reaction in target.reactions
-                    if reaction.emoji == emoji and reaction.user == user
-                ),
-                None,
-            )
+            if user_fingerprint:
+                existing = next(
+                    (
+                        reaction
+                        for reaction in target.reactions
+                        if reaction.emoji == emoji
+                        and reaction.user_fingerprint == user_fingerprint
+                    ),
+                    None,
+                )
+            else:
+                existing = next(
+                    (
+                        reaction
+                        for reaction in target.reactions
+                        if reaction.emoji == emoji and reaction.user == user
+                    ),
+                    None,
+                )
             if not existing:
                 return
             target.reactions.remove(existing)
@@ -182,7 +194,12 @@ class ChatServer:
             )
             return
 
-        reaction = Reaction(emoji=emoji, user=user, timestamp=now_iso())
+        reaction = Reaction(
+            emoji=emoji,
+            user=user,
+            timestamp=now_iso(),
+            user_fingerprint=user_fingerprint if isinstance(user_fingerprint, str) else None,
+        )
         target.reactions.append(reaction)
         self._save_history()
         await self._broadcast(

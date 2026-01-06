@@ -18,6 +18,7 @@ class Reaction:
     emoji: str
     user: str
     timestamp: str
+    user_fingerprint: str | None = None
 
 
 @dataclass

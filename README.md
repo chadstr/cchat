@@ -149,6 +149,9 @@ cchat
 - The server stores only ciphertext and forwards it; it cannot decrypt content
   or usernames.
 - TLS secures the hop between client and server (recommended in production).
+- Reaction removal uses a stable fingerprint (HMAC of username keyed by the
+  shared password+salt) so the server can match a second tap to the original
+  reaction even though encrypted usernames are non-deterministic.
 
 ## Debugging
 
@@ -170,6 +173,8 @@ python -m cchat.client --server wss://127.0.0.1:8765 --insecure --user user_one 
   proxy IP unless you explicitly trust and log a forwarded client IP header.
 - Connection logs report the direct peer IP by default; when a trusted local
   tunnel is used, logs report the forwarded client IP headers instead.
+- Stable reaction fingerprints make reactions linkable across sessions that
+  share the same password+salt; they do not reveal usernames without that secret.
 
 ## Fail2ban setup (optional)
 Use fail2ban to ban IPs that repeatedly fail join token checks. This setup

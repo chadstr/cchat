@@ -8,6 +8,7 @@ symmetric keys for the duration of the client session.
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import os
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 DEFAULT_SALT_TEXT = "cchat-shared-salt"
 _DEFAULT_SALT = DEFAULT_SALT_TEXT.encode("utf-8")
 _ITERATIONS = 390000
+_FINGERPRINT_SUFFIX = b":username-fingerprint"
 
 
 def derive_key(password: str, salt: bytes | None = None) -> bytes:
@@ -44,6 +46,18 @@ def derive_key(password: str, salt: bytes | None = None) -> bytes:
     )
     key = kdf.derive(password.encode("utf-8"))
     return base64.urlsafe_b64encode(key)
+
+
+def derive_fingerprint_key(password: str, salt: bytes | None = None) -> bytes:
+    """Derive a stable key for username fingerprints."""
+    chosen_salt = salt or _DEFAULT_SALT
+    return derive_key(password, chosen_salt + _FINGERPRINT_SUFFIX)
+
+
+def username_fingerprint(fingerprint_key: bytes, username: str) -> str:
+    """Create a stable, non-reversible fingerprint for a username."""
+    digest = hmac.new(fingerprint_key, username.encode("utf-8"), hashlib.sha256).hexdigest()
+    return digest
 
 
 def hash_unlock_phrase(phrase: str) -> tuple[str, str]:
