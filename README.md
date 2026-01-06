@@ -70,6 +70,8 @@ Notes:
 - Connection logs show direct peer IPs by default; when the tunnel runs on the
   same host (loopback), the server trusts `CF-Connecting-IP` and logs the real
   client IP instead.
+- If your tunnel runs on another host, add that host's IP to the trusted proxy
+  list in `cchat/server.py` so forwarded headers can be used safely.
 
 ### Run the client
 ```bash
