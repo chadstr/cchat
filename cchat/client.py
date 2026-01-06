@@ -219,43 +219,44 @@ class ChatLog(RichLog):
 
 class ChatApp(App[None]):
     TITLE = "CChat"
-    CSS = """
-    Screen {
+    STATUS_HEIGHT = 3
+    CSS = f"""
+    Screen {{
         background: #1a1b26;
         color: #c0caf5;
-    }
-    #chatlog {
+    }}
+    #chatlog {{
         padding: 1 2;
         height: 1fr;
-    }
-    #presence {
+    }}
+    #presence {{
         height: 1;
         content-align: center middle;
         background: #1f2335;
         color: #7aa2f7;
-    }
-    #status {
-        height: 3;
+    }}
+    #status {{
+        height: {STATUS_HEIGHT};
         content-align: center middle;
         background: #1f2335;
         color: #9ece6a;
-    }
-    #input {
+    }}
+    #input {{
         height: 6;
         border: tall #7aa2f7;
         padding: 0 1;
-    }
-    #lock_label {
+    }}
+    #lock_label {{
         height: 1fr;
         content-align: center middle;
         background: #1f2335;
         color: #f7768e;
-    }
-    #unlock_input {
+    }}
+    #unlock_input {{
         height: 3;
         border: tall #f7768e;
         padding: 0 1;
-    }
+    }}
     """
 
     BINDINGS = [
@@ -732,11 +733,26 @@ class ChatApp(App[None]):
             label.update(" ")
             label.display = True
             return
+        max_lines = self.STATUS_HEIGHT
         text = Text()
-        for idx, (line, style) in enumerate(lines):
-            if idx:
+        if max_lines > 0 and len(lines) > max_lines:
+            for idx in range(max_lines - 1):
+                if idx:
+                    text.append("\n")
+                line, style = lines[idx]
+                text.append(line, style=style)
+            if max_lines > 1:
                 text.append("\n")
+            line, style = lines[max_lines - 1]
             text.append(line, style=style)
+            for extra_line, extra_style in lines[max_lines:]:
+                text.append("; ")
+                text.append(extra_line, style=extra_style)
+        else:
+            for idx, (line, style) in enumerate(lines):
+                if idx:
+                    text.append("\n")
+                text.append(line, style=style)
         label.update(text)
         label.display = True
 
