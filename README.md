@@ -93,9 +93,11 @@ cchat
 - Right-click in the text input to insert a common emoticon.
 
 ## Notes on encryption
-- Messages and reactions are encrypted client-side with a key derived from the
+- Messages and usernames are encrypted client-side with a key derived from the
   shared password.
-- The server stores only ciphertext and forwards it; it cannot decrypt content.
+- Reaction emoji remain plaintext, but the reacting usernames are encrypted.
+- The server stores only ciphertext and forwards it; it cannot decrypt content
+  or usernames.
 - TLS secures the hop between client and server (recommended in production).
 
 ## Debugging

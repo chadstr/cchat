@@ -45,6 +45,15 @@ class ClientState:
     cipher: CipherBundle
     messages: List[ChatMessage] = field(default_factory=list)
 
+    def encrypt_username(self) -> str:
+        return self.cipher.encrypt_text(self.user)
+
+    def decrypt_username(self, payload_user: str) -> str:
+        try:
+            return self.cipher.decrypt_text(payload_user)
+        except ValueError:
+            return "*** Unknown user ***"
+
 
 class ChatInput(TextArea):
     BINDINGS = [
@@ -533,8 +542,8 @@ class ChatApp(App[None]):
             is_self = msg.user == self.state.user
             align = "right" if is_self else "left"
             meta_style = "italic #7c8298"
-            body_style = "#f0e8ff" if is_self else "#ffd7a6"
-            bubble_bg = "#2e1f4a" if is_self else "#2f1c12"
+            body_style = "#ffd7a6" if is_self else "#f0e8ff"
+            bubble_bg = "#2f1c12" if is_self else "#2e1f4a"
             body_text = self._decrypt(msg.ciphertext)
             body_lines = self._format_reply_lines(body_text, body_style)
             column_key = "self" if is_self else "other"
@@ -1356,7 +1365,7 @@ async def route_command(websocket, state: ClientState, text: str) -> None:
 async def send_message(websocket, state: ClientState, text: str) -> None:
     payload = {
         "type": "message",
-        "user": state.user,
+        "user": state.encrypt_username(),
         "ciphertext": state.cipher.encrypt_text(text),
         "timestamp": now_iso(),
     }
@@ -1377,7 +1386,7 @@ async def send_reaction(
                 "type": "reaction",
                 "message_id": message_id,
                 "emoji": emoji,
-                "user": state.user,
+                "user": state.encrypt_username(),
                 "remove": remove,
             }
         )
@@ -1389,11 +1398,30 @@ async def send_typing(websocket, state: ClientState, active: bool) -> None:
         json.dumps(
             {
                 "type": "typing",
-                "user": state.user,
+                "user": state.encrypt_username(),
                 "typing": active,
             }
         )
     )
+
+
+def _decrypt_message_payload(state: ClientState, payload: Dict) -> Dict:
+    decrypted = dict(payload)
+    if "user" in decrypted:
+        decrypted["user"] = state.decrypt_username(str(decrypted["user"]))
+    reactions = decrypted.get("reactions", [])
+    if isinstance(reactions, list) and reactions:
+        decrypted_reactions = []
+        for reaction in reactions:
+            if isinstance(reaction, dict):
+                reaction_copy = dict(reaction)
+                if "user" in reaction_copy:
+                    reaction_copy["user"] = state.decrypt_username(str(reaction_copy["user"]))
+                decrypted_reactions.append(reaction_copy)
+            else:
+                decrypted_reactions.append(reaction)
+        decrypted["reactions"] = decrypted_reactions
+    return decrypted
 
 
 async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
@@ -1403,18 +1431,21 @@ async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
             msg_type = payload.get("type")
             if msg_type == "history":
                 for message_payload in payload.get("messages", []):
-                    ui.feed_message(ChatMessage.from_payload(message_payload))
+                    ui.feed_message(ChatMessage.from_payload(_decrypt_message_payload(state, message_payload)))
             elif msg_type == "message":
-                ui.feed_message(ChatMessage.from_payload(payload["message"]))
+                ui.feed_message(ChatMessage.from_payload(_decrypt_message_payload(state, payload["message"])))
             elif msg_type == "reaction":
-                reaction = Reaction(**payload["reaction"])
+                reaction_payload = dict(payload["reaction"])
+                if "user" in reaction_payload:
+                    reaction_payload["user"] = state.decrypt_username(str(reaction_payload["user"]))
+                reaction = Reaction(**reaction_payload)
                 action = payload.get("action", "add")
                 ui.feed_reaction_action(payload["message_id"], reaction, action=action)
             elif msg_type == "typing":
                 user = payload.get("user")
                 typing = payload.get("typing", False)
                 if isinstance(user, str):
-                    ui.set_typing_status(user, bool(typing))
+                    ui.set_typing_status(state.decrypt_username(user), bool(typing))
             elif msg_type == "presence":
                 count = payload.get("connected_clients")
                 ui.set_connected_clients(count if isinstance(count, int) else None)
