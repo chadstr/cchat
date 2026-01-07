@@ -1399,6 +1399,11 @@ async def run_client(args: argparse.Namespace) -> None:
         if args.insecure:
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
+    else:
+        print(
+            "Warning: connecting without TLS (ws://). "
+            "Traffic can be intercepted."
+        )
 
     headers = {"X-Join-Token": join_token} if join_token else None
     username, salt_text, unlock_phrase_hash, unlock_phrase_salt, lock_timeout_minutes = (
