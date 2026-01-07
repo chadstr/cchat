@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import ipaddress
 import json
 import logging
 import secrets
@@ -32,6 +33,10 @@ class ChatServer:
         *,
         join_token: str | None = None,
         history_window_days: int | None = None,
+        trusted_proxies: str | None = None,
+        auth_max_failures: int = 5,
+        auth_failure_window_seconds: int = 300,
+        auth_ban_seconds: int = 900,
     ) -> None:
         self._messages: List[ChatMessage] = []
         self._clients: Set[WebSocketServerProtocol] = set()
@@ -39,6 +44,17 @@ class ChatServer:
         self._history_path = history_path
         self._join_token = join_token
         self._history_window_days = history_window_days
+        self._trusted_proxies = self._parse_trusted_proxies(trusted_proxies)
+        self._auth_max_failures = max(0, auth_max_failures)
+        self._auth_failure_window = timedelta(seconds=max(0, auth_failure_window_seconds))
+        self._auth_ban_duration = timedelta(seconds=max(0, auth_ban_seconds))
+        self._failed_auth: Dict[str, List[datetime]] = {}
+        self._banned_until: Dict[str, datetime] = {}
+        self._auth_rate_limit_enabled = (
+            self._auth_max_failures > 0
+            and self._auth_failure_window.total_seconds() > 0
+            and self._auth_ban_duration.total_seconds() > 0
+        )
         if self._history_path:
             self._load_history()
 
@@ -100,13 +116,23 @@ class ChatServer:
     async def handler(self, websocket: WebSocketServerProtocol) -> None:
         host = self._client_ip(websocket)
         logger.info("connection attempt host=%s", host or "unknown")
+        if host and self._is_banned(host):
+            logger.warning("auth blocked host=%s", host)
+            await websocket.close(code=1008, reason="too many failed attempts")
+            return
         if not self._authorize_connection(websocket):
             if host:
                 logger.warning("auth failed host=%s", host)
+                if self._record_failed_auth(host):
+                    banned_until = self._banned_until.get(host)
+                    if banned_until:
+                        logger.warning("auth banned host=%s until=%s", host, banned_until.isoformat())
             else:
                 logger.warning("auth failed host=unknown")
             await websocket.close(code=1008, reason="join token required")
             return
+        if host:
+            self._clear_failed_auth(host)
         await self.register(websocket)
         logger.info("connection accepted host=%s", host or "unknown")
         try:
@@ -282,6 +308,35 @@ class ChatServer:
             return False
         return secrets.compare_digest(token.strip(), self._join_token)
 
+    def _record_failed_auth(self, host: str) -> bool:
+        if not self._auth_rate_limit_enabled:
+            return False
+        now = datetime.now(tz=timezone.utc)
+        cutoff = now - self._auth_failure_window
+        failures = self._failed_auth.setdefault(host, [])
+        failures[:] = [timestamp for timestamp in failures if timestamp >= cutoff]
+        failures.append(now)
+        if len(failures) < self._auth_max_failures:
+            return False
+        self._failed_auth.pop(host, None)
+        self._banned_until[host] = now + self._auth_ban_duration
+        return True
+
+    def _clear_failed_auth(self, host: str) -> None:
+        self._failed_auth.pop(host, None)
+
+    def _is_banned(self, host: str) -> bool:
+        if not self._auth_rate_limit_enabled:
+            return False
+        banned_until = self._banned_until.get(host)
+        if not banned_until:
+            return False
+        now = datetime.now(tz=timezone.utc)
+        if now >= banned_until:
+            self._banned_until.pop(host, None)
+            return False
+        return True
+
     def _client_host(self, websocket: WebSocketServerProtocol) -> str | None:
         address = websocket.remote_address
         if isinstance(address, tuple) and address:
@@ -300,9 +355,34 @@ class ChatServer:
                 return forwarded
         return host
 
+    def _is_trusted_proxy(self, host: str) -> bool:
+        try:
+            parsed = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        for proxy in self._trusted_proxies:
+            if isinstance(proxy, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
+                if parsed in proxy:
+                    return True
+            elif parsed == proxy:
+                return True
+        return False
+
     @staticmethod
-    def _is_trusted_proxy(host: str) -> bool:
-        return host in {"127.0.0.1", "::1"}
+    def _parse_trusted_proxies(entries: str | None) -> List[object]:
+        proxies: List[object] = []
+        for entry in ("127.0.0.1", "::1", *(entries or "").split(",")):
+            candidate = entry.strip()
+            if not candidate:
+                continue
+            try:
+                if "/" in candidate:
+                    proxies.append(ipaddress.ip_network(candidate, strict=False))
+                else:
+                    proxies.append(ipaddress.ip_address(candidate))
+            except ValueError:
+                logger.warning("trusted proxy entry ignored: %s", candidate)
+        return proxies
 
     @staticmethod
     def _forwarded_client_ip(headers: websockets.Headers) -> str | None:
@@ -358,6 +438,28 @@ Notes:
         type=int,
         help="Only send history from the last N days (rounded to day boundary)",
     )
+    parser.add_argument(
+        "--trusted-proxies",
+        help="Comma-separated IPs/CIDRs trusted to supply forwarded client IP headers",
+    )
+    parser.add_argument(
+        "--auth-max-failures",
+        type=int,
+        default=5,
+        help="Failed join token attempts before ban (default: 5)",
+    )
+    parser.add_argument(
+        "--auth-failure-window-seconds",
+        type=int,
+        default=300,
+        help="Window for counting failed join tokens (default: 300)",
+    )
+    parser.add_argument(
+        "--auth-ban-seconds",
+        type=int,
+        default=900,
+        help="Ban duration after too many failures (default: 900)",
+    )
     return parser.parse_args()
 
 
@@ -373,6 +475,10 @@ def main() -> None:
         history_path=args.history_file,
         join_token=join_token,
         history_window_days=args.history_window_days,
+        trusted_proxies=args.trusted_proxies,
+        auth_max_failures=args.auth_max_failures,
+        auth_failure_window_seconds=args.auth_failure_window_seconds,
+        auth_ban_seconds=args.auth_ban_seconds,
     )
 
     async def run_server() -> None:
