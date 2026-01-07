@@ -126,8 +126,7 @@ class ChatServer:
                 if self._record_failed_auth(host):
                     banned_until = self._banned_until.get(host)
                     if banned_until:
-                        local_until = banned_until.astimezone().isoformat()
-                        logger.warning("auth banned host=%s until=%s", host, local_until)
+                        logger.warning("auth banned host=%s until=%s", host, banned_until.isoformat())
             else:
                 logger.warning("auth failed host=unknown")
             await websocket.close(code=1008, reason="join token required")
