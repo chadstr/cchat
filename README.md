@@ -45,6 +45,33 @@ python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfil
   --history-file ./data/history.json --history-window-days 3
 ```
 
+### Run as a systemd service (auto-start)
+Create a unit file at `/etc/systemd/system/cchat.service` (edit paths and user):
+```ini
+[Unit]
+Description=cchat server
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/cchat
+ExecStart=/path/to/cchat/.venv/bin/python -m cchat.server --port 8765 \
+  --history-file ./data/history.json --history-window-days 7 --join-token xxx
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+Using the venv's `python` in `ExecStart` ensures the service runs with the
+virtualenv dependencies.
+Then enable/start it:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now cchat
+sudo systemctl status cchat
+```
+
 ### Run behind a Cloudflare Tunnel
 You can expose the server over a Cloudflare Tunnel (cloudflared).
 
