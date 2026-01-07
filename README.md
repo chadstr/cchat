@@ -71,6 +71,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now cchat
 sudo systemctl status cchat
 ```
+View logs in the systemd journal:
+```bash
+journalctl -u cchat -f
+```
+To see recent logs without following:
+```bash
+journalctl -u cchat -n 200
+```
 
 ### Run behind a Cloudflare Tunnel
 You can expose the server over a Cloudflare Tunnel (cloudflared).
