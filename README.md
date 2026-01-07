@@ -13,7 +13,7 @@ clients. TLS keeps the hop between client and server protected.
 - Right-click in the input box to insert a common emoticon
 - Incoming messages while the UI is idle-locked are marked unread immediately
 
-## Getting started
+## Getting started - Server
 
 ### Install dependencies
 ```bash
@@ -123,12 +123,29 @@ sudo ufw allow 22/tcp
 sudo ufw deny 8765/tcp
 ```
 
+## Getting started - Client
+
+### Install dependencies
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
 ### Run the client
+
+On first run, the client prompts for the server address and join token and stores
+them in `~/.config/cchat/config.json`.
+
+```bash
+python -m cchat.client
+```
+
+To specify a different server:
 ```bash
 python -m cchat.client --server wss://<host>:8765 --join-token <token>
 ```
-On first run, the client prompts for the server address and join token and stores
-them in `~/.config/cchat/config.json`.
+
 For development with a self-signed certificate, keep TLS but skip verification:
 ```bash
 python -m cchat.client --server wss://<host>:8765 --insecure --join-token <token>
@@ -140,6 +157,7 @@ Debug options:
 - `--idle-timeout <seconds>` sets the inactivity threshold before messages count as unread (default: 15).
 - `--show-message-id` includes message IDs in chat headers for reference.
 - `--reset-unlock-phrase` prompts for a new idle lock unlock phrase.
+
 The client workflow:
 1. Connects to the server to verify reachability
 2. Prompts for your display name (stored in `~/.config/cchat/config.json`)
@@ -147,6 +165,7 @@ The client workflow:
 4. Prompts for an unlock phrase + idle lock timeout the first time (stored as a salted hash in `~/.config/cchat/config.json`)
 5. Prompts for the shared password (not stored)
 6. Opens the chat UI
+
 Process flow notes:
 - The server sends a history payload on connect, followed by live events.
 - The client decrypts usernames/reactions on receipt and appends the full history list to the local message list before rendering for the first time.
@@ -158,6 +177,7 @@ runs the client in one command. Add this to your `~/.bashrc` or `~/.zshrc`:
 ```bash
 cchat() {
   source /path/to/cchat/.venv/bin/activate
+  cd /path/to/cchat
   python -m cchat.client "$@"
 }
 ```
