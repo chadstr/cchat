@@ -112,6 +112,10 @@ The client workflow:
 4. Prompts for an unlock phrase + idle lock timeout the first time (stored as a salted hash in `~/.config/cchat/config.json`)
 5. Prompts for the shared password (not stored)
 6. Opens the chat UI
+Process flow notes:
+- The server sends a history payload on connect, followed by live events.
+- The client decrypts usernames/reactions on receipt and appends the full history list to the local message list before rendering for the first time.
+- Message bodies are decrypted on demand and cached for display, so history renders once and subsequent re-renders avoid redundant decrypts.
 
 ### Optional: shell alias for the client
 You can create a shell alias (or function) that activates the virtualenv and

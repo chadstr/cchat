@@ -29,6 +29,7 @@ class ChatMessage:
     timestamp: str
     reactions: List[Reaction] = field(default_factory=list)
     edited: bool = False
+    decrypted_body: str | None = field(default=None, repr=False, compare=False)
 
     def to_payload(self) -> Dict:
         return {

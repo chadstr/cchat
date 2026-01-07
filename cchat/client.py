@@ -582,7 +582,7 @@ class ChatApp(App[None]):
         target = next((m for m in self.state.messages if m.id == message_id), None)
         if not target:
             return
-        body_text = self._decrypt(target.ciphertext)
+        body_text = self._get_message_body(target)
         body_text = self._extract_reply_body(body_text)
         lines = body_text.splitlines() or [""]
         quote_lines = "\n".join(f"| {line}" for line in lines)
@@ -598,7 +598,7 @@ class ChatApp(App[None]):
         target = next((m for m in self.state.messages if m.id == message_id), None)
         if not target or target.user != self.state.user:
             return
-        body_text = self._decrypt(target.ciphertext)
+        body_text = self._get_message_body(target)
         input_area = self.query_one("#input", TextArea)
         input_area.text = body_text
         input_area.focus()
@@ -636,7 +636,7 @@ class ChatApp(App[None]):
             meta_style = "italic #7c8298"
             body_style = "#ffd7a6" if is_self else "#9ece6a"
             bubble_bg = "#2f1c12" if is_self else "#1f2a19"
-            body_text = self._decrypt(msg.ciphertext)
+            body_text = self._get_message_body(msg)
             body_lines = self._format_reply_lines(body_text, body_style)
             column_key = "self" if is_self else "other"
             state = column_state[column_key]
@@ -903,6 +903,11 @@ class ChatApp(App[None]):
         except ValueError:
             return "*** Unable to decrypt: check your password ***"
 
+    def _get_message_body(self, message: ChatMessage) -> str:
+        if message.decrypted_body is None:
+            message.decrypted_body = self._decrypt(message.ciphertext)
+        return message.decrypted_body
+
     def _format_reactions(self, reactions: List[Reaction]) -> List[Text]:
         if not reactions:
             return []
@@ -997,6 +1002,12 @@ class ChatApp(App[None]):
         self.state.messages.append(message)
         self.render_messages()
 
+    def feed_history(self, messages: List[ChatMessage]) -> None:
+        if not messages:
+            return
+        self.state.messages.extend(messages)
+        self.render_messages()
+
     def feed_edit(self, message: ChatMessage) -> None:
         target = next((m for m in self.state.messages if m.id == message.id), None)
         if not target:
@@ -1005,6 +1016,7 @@ class ChatApp(App[None]):
         target.timestamp = message.timestamp
         target.reactions = message.reactions
         target.edited = message.edited
+        target.decrypted_body = None
         self.render_messages()
 
     def feed_reaction(self, message_id: int, reaction: Reaction) -> None:
@@ -1570,8 +1582,11 @@ async def listen_server(websocket, state: ClientState, ui: ChatApp) -> None:
             payload = json.loads(raw)
             msg_type = payload.get("type")
             if msg_type == "history":
-                for message_payload in payload.get("messages", []):
-                    ui.feed_message(ChatMessage.from_payload(_decrypt_message_payload(state, message_payload)))
+                messages = [
+                    ChatMessage.from_payload(_decrypt_message_payload(state, message_payload))
+                    for message_payload in payload.get("messages", [])
+                ]
+                ui.feed_history(messages)
             elif msg_type == "message":
                 ui.feed_message(ChatMessage.from_payload(_decrypt_message_payload(state, payload["message"])))
             elif msg_type == "edit":
