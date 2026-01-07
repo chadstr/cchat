@@ -50,7 +50,7 @@ You can expose the server over a Cloudflare Tunnel (cloudflared).
 
 Option A: Cloudflare terminates TLS (origin is plain WS)
 ```bash
-python -m cchat.server --host 0.0.0.0 --port 8765
+python -m cchat.server --port 8765
 cloudflared tunnel --url http://localhost:8765
 ```
 Client:
@@ -60,7 +60,7 @@ python -m cchat.client --server wss://<tunnel-hostname> --join-token <token>
 
 Option B: TLS end-to-end (origin is WSS)
 ```bash
-python -m cchat.server --host 0.0.0.0 --port 8765 --certfile server.crt --keyfile server.key
+python -m cchat.server --port 8765 --certfile server.crt --keyfile server.key
 cloudflared tunnel --url https://localhost:8765 --no-tls-verify
 ```
 Client:
